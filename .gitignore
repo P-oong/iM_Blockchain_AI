@@ -1,0 +1,6 @@
+data/raw/*.csv
+data/synthetic/*.csv
+data/processed/labeling/*.csv
+
+*.pyc
+__pycache__/
