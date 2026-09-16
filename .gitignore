@@ -1,6 +1,11 @@
 data/raw/*.csv
 data/synthetic/*.csv
 data/processed/labeling/*.csv
+data/*.csv
+results
+src/models/result.py
 
 *.pyc
 __pycache__/
+
+.env
