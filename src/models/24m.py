@@ -1,78 +1,103 @@
 # ============================================================
 # Business Crisis Cohort
-# 회복탄력성 / 폐업 위험 예측 모델링
+# 시간순 Expanding Window Validation
+#
+# 검증:
+# Fold 1 : 2019~2022H2 학습 -> 2023H1 검증
+# Fold 2 : 2019~2023H1 학습 -> 2023H2 검증
+# Fold 3 : 2019~2023H2 학습 -> 2024H1 검증
+# Fold 4 : 2019~2024H1 학습 -> 2024H2 검증
+# Fold 5 : 2019~2024H2 학습 -> 2025H1 검증
+#
+# 추가 실험:
+# 1. COVID 포함
+# 2. COVID 제외 (2020~2021)
+#
+# 최종:
+# 2019~2025H1 학습
+# -> 2025H2 예측
 #
 # Models
 #   1. Random Forest
 #   2. XGBoost
 #   3. LightGBM
 #
-# Imbalance Methods
+# Imbalance
 #   1. None
-#   2. Class Weight
-#   3. Random Over Sampling
-#   4. Random Under Sampling
+#   2. ClassWeight
+#   3. RandomOver
+#   4. RandomUnder
 #   5. SMOTE
 #
-# Original Label
-#   Y_* = 0 : 폐업
-#   Y_* = 1 : 생존
+# Label
+# 원본 Y:
+#   0 = 폐업
+#   1 = 생존
 #
-# Modeling Label
+# 모델링:
 #   event_target = 1 : 폐업
 #   event_target = 0 : 생존
-#
-# 주요 평가 지표
-#   - PR-AUC
-#   - ROC-AUC
-#   - 폐업 Precision
-#   - 폐업 Recall
-#   - 폐업 F1
-#   - Balanced Accuracy
-#
-# 결과
-#   - 모델 비교 CSV
-#   - Confusion Matrix
-#   - ROC Curve
-#   - PR Curve
-#   - Feature Importance
-#   - SHAP Summary
-#   - SHAP Importance
-#   - 텍스트 요약
 # ============================================================
 
 
 # ============================================================
-# 0. BASIC IMPORT
+# 0. IMPORT
 # ============================================================
 
 from pathlib import Path
 import warnings
 import platform
+import copy
 
 warnings.filterwarnings("ignore")
 
 import numpy as np
 import pandas as pd
 
-
-# ============================================================
-# 1. MATPLOTLIB
-# ============================================================
-
-# Tkinter GUI 오류 방지를 위해
-# pyplot보다 반드시 먼저 실행
-
 import matplotlib
-
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
 
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
+
+from sklearn.ensemble import RandomForestClassifier
+
+from sklearn.metrics import (
+    accuracy_score,
+    balanced_accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    average_precision_score,
+    confusion_matrix,
+    ConfusionMatrixDisplay,
+    RocCurveDisplay,
+    PrecisionRecallDisplay,
+)
+
+from imblearn.over_sampling import (
+    RandomOverSampler,
+    SMOTE,
+)
+
+from imblearn.under_sampling import (
+    RandomUnderSampler,
+)
+
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
+
+import shap
+
 
 # ============================================================
-# 2. 한글 폰트 설정
+# 1. 한글 폰트
 # ============================================================
 
 def set_korean_font():
@@ -113,14 +138,11 @@ def set_korean_font():
         if candidate in installed_fonts:
 
             selected_font = candidate
-
             break
 
-    if selected_font is not None:
+    if selected_font:
 
-        plt.rcParams[
-            "font.family"
-        ] = selected_font
+        plt.rcParams["font.family"] = selected_font
 
         print(
             f"[폰트] {selected_font}"
@@ -130,10 +152,9 @@ def set_korean_font():
 
         print(
             "[경고] 한글 폰트를 "
-            "자동으로 찾지 못했습니다."
+            "찾지 못했습니다."
         )
 
-    # 마이너스 깨짐 방지
     plt.rcParams[
         "axes.unicode_minus"
     ] = False
@@ -143,99 +164,18 @@ set_korean_font()
 
 
 # ============================================================
-# 3. ML IMPORT
-# ============================================================
-
-from sklearn.model_selection import (
-    train_test_split,
-)
-
-from sklearn.compose import (
-    ColumnTransformer,
-)
-
-from sklearn.preprocessing import (
-    OneHotEncoder,
-)
-
-from sklearn.impute import (
-    SimpleImputer,
-)
-
-from sklearn.pipeline import (
-    Pipeline,
-)
-
-from sklearn.ensemble import (
-    RandomForestClassifier,
-)
-
-from sklearn.metrics import (
-    accuracy_score,
-    balanced_accuracy_score,
-    precision_score,
-    recall_score,
-    f1_score,
-    roc_auc_score,
-    average_precision_score,
-    ConfusionMatrixDisplay,
-    RocCurveDisplay,
-    PrecisionRecallDisplay,
-)
-
-from imblearn.over_sampling import (
-    RandomOverSampler,
-    SMOTE,
-)
-
-from imblearn.under_sampling import (
-    RandomUnderSampler,
-)
-
-from xgboost import (
-    XGBClassifier,
-)
-
-from lightgbm import (
-    LGBMClassifier,
-)
-
-import shap
-
-
-# ============================================================
-# 4. CONFIG
+# 2. CONFIG
 # ============================================================
 
 RANDOM_STATE = 42
 
-TEST_SIZE = 0.20
-
-
-# ------------------------------------------------------------
-# 예측 Horizon
-#
-# "12M"
-# "18M"
-# "24M"
-#
-# 여기만 변경하면 됨
-# ------------------------------------------------------------
-
 TARGET_HORIZON = "24M"
 
-
-TARGET = (
-    f"Y_{TARGET_HORIZON}"
-)
-
-LABEL_STATUS = (
-    f"label_status_{TARGET_HORIZON}"
-)
+TARGET = f"Y_{TARGET_HORIZON}"
 
 
 # ------------------------------------------------------------
-# 데이터 경로
+# 데이터
 # ------------------------------------------------------------
 
 DATA_PATH = Path(
@@ -244,33 +184,23 @@ DATA_PATH = Path(
 
 
 # ------------------------------------------------------------
-# 결과 저장 경로
+# 결과
 # ------------------------------------------------------------
 
 OUTPUT_DIR = (
-    Path(r"C:\Users\DC\2026\IMBANK\iM_Blockchain_AI\results")
+    Path(
+        r"C:\Users\DC\2026\IMBANK\iM_Blockchain_AI\results"
+    )
     / TARGET_HORIZON
+    / "time_validation"
 )
 
-METRIC_DIR = (
-    OUTPUT_DIR
-    / "metrics"
-)
 
-FIGURE_DIR = (
-    OUTPUT_DIR
-    / "figures"
-)
-
-IMPORTANCE_DIR = (
-    OUTPUT_DIR
-    / "importance"
-)
-
-SHAP_DIR = (
-    OUTPUT_DIR
-    / "shap"
-)
+METRIC_DIR = OUTPUT_DIR / "metrics"
+FIGURE_DIR = OUTPUT_DIR / "figures"
+IMPORTANCE_DIR = OUTPUT_DIR / "importance"
+SHAP_DIR = OUTPUT_DIR / "shap"
+PREDICTION_DIR = OUTPUT_DIR / "predictions"
 
 
 for directory in [
@@ -279,6 +209,7 @@ for directory in [
     FIGURE_DIR,
     IMPORTANCE_DIR,
     SHAP_DIR,
+    PREDICTION_DIR,
 
 ]:
 
@@ -289,805 +220,489 @@ for directory in [
 
 
 # ============================================================
-# 5. 데이터 로드
+# 3. 시간 설정
 # ============================================================
 
-print("\n")
-print("=" * 70)
+TRAIN_START = pd.Timestamp(
+    "2019-01-01"
+)
+
+
+# ------------------------------------------------------------
+# COVID 정의
+# ------------------------------------------------------------
+
+COVID_START = pd.Timestamp(
+    "2020-01-01"
+)
+
+COVID_END = pd.Timestamp(
+    "2021-12-31"
+)
+
+
+# ------------------------------------------------------------
+# Expanding Window
+# ------------------------------------------------------------
+
+VALIDATION_FOLDS = [
+
+    {
+        "Fold": 1,
+        "Train_End": "2022-12-31",
+        "Valid_Start": "2023-01-01",
+        "Valid_End": "2023-06-30",
+        "Valid_Name": "2023H1",
+    },
+
+    {
+        "Fold": 2,
+        "Train_End": "2023-06-30",
+        "Valid_Start": "2023-07-01",
+        "Valid_End": "2023-12-31",
+        "Valid_Name": "2023H2",
+    },
+
+    {
+        "Fold": 3,
+        "Train_End": "2023-12-31",
+        "Valid_Start": "2024-01-01",
+        "Valid_End": "2024-06-30",
+        "Valid_Name": "2024H1",
+    },
+
+    {
+        "Fold": 4,
+        "Train_End": "2024-06-30",
+        "Valid_Start": "2024-07-01",
+        "Valid_End": "2024-12-31",
+        "Valid_Name": "2024H2",
+    },
+
+    {
+        "Fold": 5,
+        "Train_End": "2024-12-31",
+        "Valid_Start": "2025-01-01",
+        "Valid_End": "2025-06-30",
+        "Valid_Name": "2025H1",
+    },
+
+]
+
+
+# ------------------------------------------------------------
+# 최종 모델
+#
+# 2019~2025H1 학습
+# 2025H2 예측
+# ------------------------------------------------------------
+
+FINAL_TRAIN_END = pd.Timestamp(
+    "2025-06-30"
+)
+
+FINAL_PREDICT_START = pd.Timestamp(
+    "2025-07-01"
+)
+
+FINAL_PREDICT_END = pd.Timestamp(
+    "2025-12-31"
+)
+
+
+# ============================================================
+# 4. 데이터 로드
+# ============================================================
+
+print("\n" + "=" * 80)
 
 print(
     "Business Crisis Cohort "
-    "Modeling"
+    "Time Validation"
 )
 
 print(
-    f"Horizon = "
-    f"{TARGET_HORIZON}"
+    f"Horizon = {TARGET_HORIZON}"
 )
 
-print("=" * 70)
+print("=" * 80)
 
 
 if not DATA_PATH.exists():
 
     raise FileNotFoundError(
-        f"\n데이터 파일을 "
-        f"찾을 수 없습니다.\n"
+        f"데이터가 없습니다.\n"
         f"{DATA_PATH.resolve()}"
     )
 
 
 df = pd.read_csv(
-    DATA_PATH
+    DATA_PATH,
+    low_memory=False,
 )
 
 
 print(
-    f"\n전체 데이터 수: "
+    f"\n전체 데이터: "
     f"{len(df):,}"
 )
 
 print(
-    f"전체 컬럼 수: "
+    f"전체 컬럼: "
     f"{df.shape[1]:,}"
 )
 
 
 # ============================================================
-# 6. TARGET 존재 확인
+# 5. 필수 컬럼
 # ============================================================
 
-if TARGET not in df.columns:
+required_cols = [
+    "t0",
+    TARGET,
+]
 
-    raise KeyError(
-        f"{TARGET} 컬럼이 없습니다."
-    )
+
+for col in required_cols:
+
+    if col not in df.columns:
+
+        raise KeyError(
+            f"{col} 컬럼이 없습니다."
+        )
 
 
 # ============================================================
-# 7. 관측 가능한 Label만 사용
+# 6. t0 날짜 변환
 # ============================================================
 
-# label_status 문자열에 의존하지 않고
-# 실제 Y가 존재하는 행만 사용
+df["t0"] = pd.to_datetime(
+    df["t0"],
+    errors="coerce",
+)
 
-model_df = (
+
+invalid_t0 = (
+    df["t0"].isna().sum()
+)
+
+
+print(
+    f"\nt0 변환 실패: "
+    f"{invalid_t0:,}"
+)
+
+
+df = (
     df[
-        df[TARGET].notna()
+        df["t0"].notna()
     ]
     .copy()
 )
 
 
-print("\n")
-print("-" * 70)
+# ============================================================
+# 7. 시간 파생변수
+# ============================================================
 
-print(
-    f"{TARGET} 관측 가능 데이터"
+df["t0_year"] = (
+    df["t0"].dt.year
 )
 
-print("-" * 70)
+df["t0_month"] = (
+    df["t0"].dt.month
+)
 
-print(
-    f"{len(model_df):,} / "
-    f"{len(df):,}"
+df["t0_half"] = np.where(
+    df["t0_month"] <= 6,
+    1,
+    2,
+)
+
+df["t0_period"] = (
+    df["t0_year"].astype(str)
+    + "H"
+    + df["t0_half"].astype(str)
 )
 
 
 # ============================================================
-# 8. 원본 Label 확인
-# ============================================================
-
-print(
-    "\n[원본 Label 빈도]"
-)
-
-print(
-    model_df[
-        TARGET
-    ]
-    .value_counts(
-        dropna=False
-    )
-    .sort_index()
-)
-
-
-print(
-    "\n[원본 Label 비율]"
-)
-
-print(
-    (
-        model_df[
-            TARGET
-        ]
-        .value_counts(
-            normalize=True
-        )
-        .sort_index()
-        * 100
-    )
-    .round(2)
-)
-
-
-# ============================================================
-# 9. Target 재정의
-# ============================================================
-
-# 기존:
+# 8. event_target
 #
-# 0 = 폐업
-# 1 = 생존
+# Y = 0 폐업
+# Y = 1 생존
 #
-# 모델링:
-#
-# 1 = 폐업
-# 0 = 생존
-#
-# sklearn에서 positive class를
-# 폐업으로 통일하기 위함
+# event_target:
+# 1 폐업
+# 0 생존
+# ============================================================
 
-
-model_df[
-    "event_target"
-] = (
-
-    1
-    - model_df[
-        TARGET
-    ].astype(int)
-
-)
-
-
-print("\n")
-print("-" * 70)
-
-print(
-    "모델링 Target"
-)
-
-print("-" * 70)
-
-print(
-    "0 = 생존"
-)
-
-print(
-    "1 = 폐업"
-)
-
-
-target_counts = (
-    model_df[
-        "event_target"
-    ]
-    .value_counts()
-    .sort_index()
-)
-
-
-print(
-    "\n[Target 빈도]"
-)
-
-print(
-    target_counts.rename(
-        {
-            0: "생존",
-            1: "폐업",
-        }
-    )
-)
-
-
-print(
-    "\n[Target 비율]"
-)
-
-print(
-    (
-        target_counts
-        / target_counts.sum()
-        * 100
-    )
-    .round(2)
-    .rename(
-        {
-            0: "생존",
-            1: "폐업",
-        }
-    )
+df["event_target"] = np.where(
+    df[TARGET].notna(),
+    1 - df[TARGET],
+    np.nan,
 )
 
 
 # ============================================================
-# 10. Leakage 변수 제거
+# 9. 모델 Feature 제외 컬럼
 # ============================================================
-
-# Y / horizon / label_status는
-# 절대 X에 사용하지 않음
-
 
 EXCLUDE_COLS = [
 
-    # ------------------------
-    # ID
-    # ------------------------
-
     "관리번호",
-
-    # ------------------------
-    # 모든 Y
-    # ------------------------
 
     "Y_12M",
     "Y_18M",
     "Y_24M",
 
-    # ------------------------
-    # Horizon
-    # ------------------------
-
     "horizon_end_12M",
     "horizon_end_18M",
     "horizon_end_24M",
-
-    # ------------------------
-    # Label status
-    # ------------------------
 
     "label_status_12M",
     "label_status_18M",
     "label_status_24M",
 
-    # ------------------------
-    # 새 Target
-    # ------------------------
-
     "event_target",
 
-    # ------------------------
-    # 날짜
-    # ------------------------
-
+    # 날짜는 split 전용
     "t0",
+
     "episode_start",
+
+    # t0에서 만든 split용 변수
+    "t0_year",
+    "t0_month",
+    "t0_half",
+    "t0_period",
 ]
 
 
-EXCLUDE_COLS = [
-
-    col
-
-    for col in EXCLUDE_COLS
-
-    if col in model_df.columns
-
-]
-
-
-X = model_df.drop(
-    columns=EXCLUDE_COLS
-)
-
-y = model_df[
-    "event_target"
-]
-
-
-print(
-    "\n제외된 컬럼:"
-)
-
-for col in EXCLUDE_COLS:
-
-    print(
-        f" - {col}"
-    )
-
-
 # ============================================================
-# 11. 상수 컬럼 제거
+# 10. 강제 범주형
 # ============================================================
-
-constant_cols = [
-
-    col
-
-    for col in X.columns
-
-    if X[col].nunique(
-        dropna=False
-    ) <= 1
-
-]
-
-
-if constant_cols:
-
-    print(
-        "\n[상수 컬럼 제거]"
-    )
-
-    for col in constant_cols:
-
-        print(
-            f" - {col}"
-        )
-
-    X = X.drop(
-        columns=constant_cols
-    )
-
-
-# ============================================================
-# 12. 범주형 / 수치형 구분
-# ============================================================
-
-# 숫자로 저장되어 있어도
-# 범주형 의미를 가진 변수
 
 FORCE_CATEGORICAL = [
 
     "구",
     "읍면동",
+    "법정동",
+    "법정동코드",
+    "행정동",
+    "행정동코드",
+
     "업종",
     "기준분기",
-    "행정동코드",
     "quarter_of_year",
 
 ]
 
 
-categorical_cols = [
+# ============================================================
+# 11. Feature 생성
+# ============================================================
 
-    col
+def get_feature_columns(data):
 
-    for col in X.columns
+    exclude = [
 
-    if (
+        col
 
-        X[col].dtype
-        == "object"
+        for col in EXCLUDE_COLS
 
-        or
+        if col in data.columns
 
-        col in FORCE_CATEGORICAL
+    ]
 
+    X = data.drop(
+        columns=exclude
+    ).copy()
+
+
+    # 상수 컬럼 제거
+    constant_cols = [
+
+        col
+
+        for col in X.columns
+
+        if X[col].nunique(
+            dropna=False
+        ) <= 1
+
+    ]
+
+
+    if constant_cols:
+
+        X = X.drop(
+            columns=constant_cols
+        )
+
+
+    return (
+        X.columns.tolist(),
+        constant_cols,
     )
 
-]
 
-
-numeric_cols = [
-
-    col
-
-    for col in X.columns
-
-    if col not in categorical_cols
-
-]
-
-
-print("\n")
-print("-" * 70)
-
-print(
-    "Feature 정보"
-)
-
-print("-" * 70)
-
-
-print(
-    f"전체 Feature: "
-    f"{X.shape[1]}"
+feature_columns, constant_cols = (
+    get_feature_columns(df)
 )
 
 
 print(
-    f"Numeric: "
-    f"{len(numeric_cols)}"
+    f"\nFeature 수: "
+    f"{len(feature_columns):,}"
 )
 
 
-print(
-    f"Categorical: "
-    f"{len(categorical_cols)}"
-)
-
-
-print(
-    "\n[범주형 변수]"
-)
-
-for col in categorical_cols:
+if constant_cols:
 
     print(
-        f" - {col}"
+        f"상수 제거: "
+        f"{len(constant_cols):,}"
     )
 
 
 # ============================================================
-# 13. Train / Test Split
+# 12. 전처리 생성 함수
+#
+# 중요:
+# Fold마다 Train에만 fit
 # ============================================================
 
-X_train, X_test, \
-y_train, y_test = (
+def create_preprocessor(
+    X_train
+):
 
-    train_test_split(
+    categorical_cols = [
 
-        X,
-        y,
+        col
 
-        test_size=TEST_SIZE,
+        for col in X_train.columns
 
-        stratify=y,
+        if (
+            X_train[col].dtype
+            == "object"
 
-        random_state=RANDOM_STATE,
+            or
 
-    )
-
-)
-
-
-print("\n")
-print("-" * 70)
-
-print(
-    "Train / Test"
-)
-
-print("-" * 70)
-
-
-print(
-    f"Train: "
-    f"{len(X_train):,}"
-)
-
-
-print(
-    f"Test : "
-    f"{len(X_test):,}"
-)
-
-
-print(
-    "\n[Train Target]"
-)
-
-print(
-    y_train
-    .value_counts()
-    .sort_index()
-    .rename(
-        {
-            0: "생존",
-            1: "폐업",
-        }
-    )
-)
-
-
-print(
-    "\n[Test Target]"
-)
-
-print(
-    y_test
-    .value_counts()
-    .sort_index()
-    .rename(
-        {
-            0: "생존",
-            1: "폐업",
-        }
-    )
-)
-
-
-# ============================================================
-# 14. 전처리 Pipeline
-# ============================================================
-
-numeric_pipeline = Pipeline(
-
-    steps=[
-
-        (
-
-            "imputer",
-
-            SimpleImputer(
-                strategy="median"
-            ),
-
-        ),
+            col in FORCE_CATEGORICAL
+        )
 
     ]
 
-)
 
+    numeric_cols = [
 
-categorical_pipeline = Pipeline(
+        col
 
-    steps=[
+        for col in X_train.columns
 
-        (
-
-            "imputer",
-
-            SimpleImputer(
-                strategy="most_frequent"
-            ),
-
-        ),
-
-        (
-
-            "onehot",
-
-            OneHotEncoder(
-
-                handle_unknown="ignore",
-
-                sparse_output=False,
-
-            ),
-
-        ),
+        if col not in categorical_cols
 
     ]
 
-)
 
+    numeric_pipeline = Pipeline(
 
-preprocessor = ColumnTransformer(
+        steps=[
 
-    transformers=[
+            (
+                "imputer",
 
-        (
+                SimpleImputer(
+                    strategy="median"
+                ),
+            ),
 
-            "numeric",
-
-            numeric_pipeline,
-
-            numeric_cols,
-
-        ),
-
-        (
-
-            "categorical",
-
-            categorical_pipeline,
-
-            categorical_cols,
-
-        ),
-
-    ],
-
-    remainder="drop",
-
-)
-
-
-# ============================================================
-# 15. Train으로 전처리 Fit
-# ============================================================
-
-X_train_processed = (
-    preprocessor
-    .fit_transform(
-        X_train
-    )
-)
-
-
-X_test_processed = (
-    preprocessor
-    .transform(
-        X_test
-    )
-)
-
-
-# ============================================================
-# 16. Feature 이름
-# ============================================================
-
-feature_names = (
-
-    preprocessor
-    .get_feature_names_out()
-
-)
-
-
-feature_names = [
-
-    feature
-    .replace(
-        "numeric__",
-        ""
-    )
-    .replace(
-        "categorical__",
-        ""
-    )
-
-    for feature in feature_names
-
-]
-
-
-print(
-    f"\n전처리 후 Feature 수: "
-    f"{len(feature_names):,}"
-)
-
-
-# ============================================================
-# 17. NaN / Inf 확인
-# ============================================================
-
-if np.isnan(
-    X_train_processed
-).any():
-
-    raise ValueError(
-        "전처리 후 Train에 "
-        "NaN이 존재합니다."
+        ]
     )
 
 
-if np.isinf(
-    X_train_processed
-).any():
+    categorical_pipeline = Pipeline(
 
-    raise ValueError(
-        "전처리 후 Train에 "
-        "Inf가 존재합니다."
+        steps=[
+
+            (
+                "imputer",
+
+                SimpleImputer(
+                    strategy="most_frequent"
+                ),
+            ),
+
+            (
+                "onehot",
+
+                OneHotEncoder(
+                    handle_unknown="ignore",
+                    sparse_output=False,
+                ),
+            ),
+
+        ]
+    )
+
+
+    preprocessor = ColumnTransformer(
+
+        transformers=[
+
+            (
+                "numeric",
+                numeric_pipeline,
+                numeric_cols,
+            ),
+
+            (
+                "categorical",
+                categorical_pipeline,
+                categorical_cols,
+            ),
+
+        ],
+
+        remainder="drop",
+    )
+
+
+    return (
+        preprocessor,
+        numeric_cols,
+        categorical_cols,
     )
 
 
 # ============================================================
-# 18. 불균형 비율
-# ============================================================
-
-n_survival = (
-    y_train == 0
-).sum()
-
-
-n_closure = (
-    y_train == 1
-).sum()
-
-
-if n_closure == 0:
-
-    raise ValueError(
-        "Train 데이터에 "
-        "폐업 클래스가 없습니다."
-    )
-
-
-scale_pos_weight = (
-
-    n_survival
-    / n_closure
-
-)
-
-
-print(
-    "\nscale_pos_weight = "
-    f"{scale_pos_weight:.4f}"
-)
-
-
-# ============================================================
-# 19. Sampling Methods
-# ============================================================
-
-SAMPLERS = {
-
-    "None":
-
-        None,
-
-
-    "RandomOver":
-
-        RandomOverSampler(
-
-            random_state=
-                RANDOM_STATE
-
-        ),
-
-
-    "RandomUnder":
-
-        RandomUnderSampler(
-
-            random_state=
-                RANDOM_STATE
-
-        ),
-
-
-    "SMOTE":
-
-        SMOTE(
-
-            random_state=
-                RANDOM_STATE,
-
-            k_neighbors=5,
-
-        ),
-
-}
-
-
-# ============================================================
-# 20. 모델 생성 함수
+# 13. 모델 생성
 # ============================================================
 
 def get_models(
-    use_class_weight=False
+    scale_pos_weight=1.0,
+    use_class_weight=False,
 ):
 
-    # -------------------------
-    # Random Forest
-    # -------------------------
-
     rf_weight = (
-
         "balanced"
-
         if use_class_weight
-
         else None
-
     )
 
-
-    # -------------------------
-    # XGBoost
-    # -------------------------
 
     xgb_weight = (
-
         scale_pos_weight
-
         if use_class_weight
-
         else 1.0
-
     )
 
 
-    # -------------------------
-    # LightGBM
-    # -------------------------
-
     lgbm_weight = (
-
         "balanced"
-
         if use_class_weight
-
         else None
-
     )
 
 
@@ -1098,19 +713,14 @@ def get_models(
             RandomForestClassifier(
 
                 n_estimators=500,
-
                 max_depth=None,
-
                 min_samples_leaf=2,
 
-                class_weight=
-                    rf_weight,
+                class_weight=rf_weight,
 
-                random_state=
-                    RANDOM_STATE,
+                random_state=RANDOM_STATE,
 
                 n_jobs=-1,
-
             ),
 
 
@@ -1139,7 +749,6 @@ def get_models(
                     RANDOM_STATE,
 
                 n_jobs=-1,
-
             ),
 
 
@@ -1166,14 +775,64 @@ def get_models(
                 verbosity=-1,
 
                 n_jobs=-1,
-
             ),
 
     }
 
 
 # ============================================================
-# 21. 평가 함수
+# 14. Sampler 생성
+#
+# 매 Fold마다 새로 생성
+# ============================================================
+
+def get_sampler(
+    method
+):
+
+    if method == "None":
+
+        return None
+
+
+    if method == "RandomOver":
+
+        return RandomOverSampler(
+            random_state=RANDOM_STATE
+        )
+
+
+    if method == "RandomUnder":
+
+        return RandomUnderSampler(
+            random_state=RANDOM_STATE
+        )
+
+
+    if method == "SMOTE":
+
+        return SMOTE(
+            random_state=RANDOM_STATE,
+            k_neighbors=5,
+        )
+
+
+    return None
+
+
+IMBALANCE_METHODS = [
+
+    "None",
+    "ClassWeight",
+    "RandomOver",
+    "RandomUnder",
+    "SMOTE",
+
+]
+
+
+# ============================================================
+# 15. 평가 함수
 # ============================================================
 
 def evaluate_model(
@@ -1182,10 +841,8 @@ def evaluate_model(
     y_eval,
 ):
 
-    prediction = (
-        model.predict(
-            X_eval
-        )
+    prediction = model.predict(
+        X_eval
     )
 
 
@@ -1200,25 +857,18 @@ def evaluate_model(
     metrics = {
 
         "Accuracy":
-
             accuracy_score(
                 y_eval,
                 prediction,
             ),
 
-
         "Balanced_Accuracy":
-
             balanced_accuracy_score(
                 y_eval,
                 prediction,
             ),
 
-
-        # Positive = 폐업
-
         "Precision_Closure":
-
             precision_score(
                 y_eval,
                 prediction,
@@ -1226,9 +876,7 @@ def evaluate_model(
                 zero_division=0,
             ),
 
-
         "Recall_Closure":
-
             recall_score(
                 y_eval,
                 prediction,
@@ -1236,9 +884,7 @@ def evaluate_model(
                 zero_division=0,
             ),
 
-
         "F1_Closure":
-
             f1_score(
                 y_eval,
                 prediction,
@@ -1246,23 +892,36 @@ def evaluate_model(
                 zero_division=0,
             ),
 
+    }
 
-        "ROC_AUC":
 
+    # Validation에 클래스 하나만 있는 경우 보호
+    if y_eval.nunique() >= 2:
+
+        metrics["ROC_AUC"] = (
             roc_auc_score(
                 y_eval,
                 probability,
-            ),
+            )
+        )
+
+    else:
+
+        metrics["ROC_AUC"] = np.nan
 
 
-        "PR_AUC":
+    if (y_eval == 1).sum() > 0:
 
+        metrics["PR_AUC"] = (
             average_precision_score(
                 y_eval,
                 probability,
-            ),
+            )
+        )
 
-    }
+    else:
+
+        metrics["PR_AUC"] = np.nan
 
 
     return (
@@ -1273,227 +932,1693 @@ def evaluate_model(
 
 
 # ============================================================
-# 22. 평가 그래프
+# 16. COVID 필터
 # ============================================================
 
-def save_evaluation_plots(
-    model_name,
-    imbalance_name,
-    y_true,
-    prediction,
-    probability,
+def apply_covid_filter(
+    train_df,
+    covid_mode,
 ):
 
-    file_prefix = (
+    if covid_mode == "포함":
 
-        f"{model_name}_"
-        f"{imbalance_name}"
+        return train_df.copy()
 
-    )
 
+    elif covid_mode == "제외":
 
-    # ========================================================
-    # Confusion Matrix
-    # ========================================================
+        mask = ~(
+            (
+                train_df["t0"]
+                >= COVID_START
+            )
+            &
+            (
+                train_df["t0"]
+                <= COVID_END
+            )
+        )
 
-    fig, ax = plt.subplots(
-        figsize=(6, 5)
-    )
 
+        return (
+            train_df[
+                mask
+            ]
+            .copy()
+        )
 
-    ConfusionMatrixDisplay.from_predictions(
 
-        y_true,
+    else:
 
-        prediction,
-
-        display_labels=[
-            "생존",
-            "폐업",
-        ],
-
-        cmap="Blues",
-
-        ax=ax,
-
-    )
-
-
-    ax.set_title(
-
-        f"{TARGET_HORIZON} "
-        f"혼동행렬\n"
-        f"{model_name} / "
-        f"{imbalance_name}"
-
-    )
-
-
-    ax.set_xlabel(
-        "예측값"
-    )
-
-
-    ax.set_ylabel(
-        "실제값"
-    )
-
-
-    plt.tight_layout()
-
-
-    plt.savefig(
-
-        FIGURE_DIR
-        / (
-            f"{file_prefix}_"
-            f"confusion_matrix.png"
-        ),
-
-        dpi=200,
-
-        bbox_inches="tight",
-
-    )
-
-
-    plt.close(fig)
-
-
-    # ========================================================
-    # ROC Curve
-    # ========================================================
-
-    fig, ax = plt.subplots(
-        figsize=(6, 5)
-    )
-
-
-    RocCurveDisplay.from_predictions(
-
-        y_true,
-
-        probability,
-
-        ax=ax,
-
-    )
-
-
-    ax.set_title(
-
-        f"{TARGET_HORIZON} "
-        f"ROC Curve\n"
-        f"{model_name} / "
-        f"{imbalance_name}"
-
-    )
-
-
-    plt.tight_layout()
-
-
-    plt.savefig(
-
-        FIGURE_DIR
-        / (
-            f"{file_prefix}_"
-            f"roc_curve.png"
-        ),
-
-        dpi=200,
-
-        bbox_inches="tight",
-
-    )
-
-
-    plt.close(fig)
-
-
-    # ========================================================
-    # PR Curve
-    # ========================================================
-
-    fig, ax = plt.subplots(
-        figsize=(6, 5)
-    )
-
-
-    PrecisionRecallDisplay.from_predictions(
-
-        y_true,
-
-        probability,
-
-        ax=ax,
-
-    )
-
-
-    ax.set_title(
-
-        f"{TARGET_HORIZON} "
-        f"Precision-Recall Curve\n"
-        f"{model_name} / "
-        f"{imbalance_name}"
-
-    )
-
-
-    plt.tight_layout()
-
-
-    plt.savefig(
-
-        FIGURE_DIR
-        / (
-            f"{file_prefix}_"
-            f"pr_curve.png"
-        ),
-
-        dpi=200,
-
-        bbox_inches="tight",
-
-    )
-
-
-    plt.close(fig)
+        raise ValueError(
+            covid_mode
+        )
 
 
 # ============================================================
-# 23. Feature Importance
+# 17. 단일 Fold 학습 함수
 # ============================================================
 
-def save_feature_importance(
-    model,
+def run_single_fold(
+    train_df,
+    valid_df,
     model_name,
-    imbalance_name,
+    imbalance_method,
 ):
 
-    if not hasattr(
-        model,
-        "feature_importances_"
+    # --------------------------------------------------------
+    # 관측 가능한 Label만 학습
+    # --------------------------------------------------------
+
+    train_df = (
+
+        train_df[
+            train_df[
+                "event_target"
+            ].notna()
+        ]
+
+        .copy()
+
+    )
+
+
+    valid_df = (
+
+        valid_df[
+            valid_df[
+                "event_target"
+            ].notna()
+        ]
+
+        .copy()
+
+    )
+
+
+    if len(train_df) == 0:
+
+        raise ValueError(
+            "Train 데이터가 없습니다."
+        )
+
+
+    if len(valid_df) == 0:
+
+        raise ValueError(
+            "Validation 데이터가 없습니다."
+        )
+
+
+    if (
+        train_df[
+            "event_target"
+        ].nunique()
+        < 2
     ):
 
-        return
+        raise ValueError(
+            "Train에 클래스가 "
+            "하나만 존재합니다."
+        )
 
 
-    importance_df = pd.DataFrame(
+    # --------------------------------------------------------
+    # X / y
+    # --------------------------------------------------------
 
-        {
+    X_train = (
+        train_df[
+            feature_columns
+        ]
+        .copy()
+    )
 
-            "변수":
-                feature_names,
 
-            "중요도":
-                model
-                .feature_importances_,
+    X_valid = (
+        valid_df[
+            feature_columns
+        ]
+        .copy()
+    )
 
-        }
+
+    y_train = (
+        train_df[
+            "event_target"
+        ]
+        .astype(int)
+    )
+
+
+    y_valid = (
+        valid_df[
+            "event_target"
+        ]
+        .astype(int)
+    )
+
+
+    # --------------------------------------------------------
+    # 전처리
+    #
+    # 반드시 Train에만 fit
+    # --------------------------------------------------------
+
+    (
+        preprocessor,
+        numeric_cols,
+        categorical_cols,
+
+    ) = create_preprocessor(
+        X_train
+    )
+
+
+    X_train_processed = (
+        preprocessor
+        .fit_transform(
+            X_train
+        )
+    )
+
+
+    X_valid_processed = (
+        preprocessor
+        .transform(
+            X_valid
+        )
+    )
+
+
+    # --------------------------------------------------------
+    # 불균형 비율
+    # --------------------------------------------------------
+
+    n_survival = (
+        y_train == 0
+    ).sum()
+
+
+    n_closure = (
+        y_train == 1
+    ).sum()
+
+
+    if n_closure == 0:
+
+        raise ValueError(
+            "폐업 클래스가 없습니다."
+        )
+
+
+    scale_pos_weight = (
+        n_survival
+        / n_closure
+    )
+
+
+    # --------------------------------------------------------
+    # ClassWeight
+    # --------------------------------------------------------
+
+    use_class_weight = (
+        imbalance_method
+        == "ClassWeight"
+    )
+
+
+    models = get_models(
+
+        scale_pos_weight=
+            scale_pos_weight,
+
+        use_class_weight=
+            use_class_weight,
 
     )
+
+
+    model = models[
+        model_name
+    ]
+
+
+    # --------------------------------------------------------
+    # Sampling
+    # --------------------------------------------------------
+
+    if imbalance_method in [
+
+        "RandomOver",
+        "RandomUnder",
+        "SMOTE",
+
+    ]:
+
+        sampler = get_sampler(
+            imbalance_method
+        )
+
+
+        # SMOTE에서 minority가 너무 적은 경우
+        if imbalance_method == "SMOTE":
+
+            minority_count = (
+                y_train
+                .value_counts()
+                .min()
+            )
+
+
+            if minority_count <= 5:
+
+                k = max(
+                    1,
+                    minority_count - 1
+                )
+
+
+                sampler = SMOTE(
+
+                    random_state=
+                        RANDOM_STATE,
+
+                    k_neighbors=k,
+
+                )
+
+
+        (
+            X_fit,
+            y_fit,
+
+        ) = sampler.fit_resample(
+
+            X_train_processed,
+            y_train,
+
+        )
+
+
+    else:
+
+        X_fit = (
+            X_train_processed
+        )
+
+        y_fit = (
+            y_train.to_numpy()
+        )
+
+
+    # --------------------------------------------------------
+    # 학습
+    # --------------------------------------------------------
+
+    model.fit(
+        X_fit,
+        y_fit,
+    )
+
+
+    # --------------------------------------------------------
+    # 검증
+    # --------------------------------------------------------
+
+    (
+        metrics,
+        prediction,
+        probability,
+
+    ) = evaluate_model(
+
+        model,
+
+        X_valid_processed,
+
+        y_valid,
+
+    )
+
+
+    return {
+
+        "metrics": metrics,
+
+        "model": model,
+
+        "preprocessor":
+            preprocessor,
+
+        "prediction":
+            prediction,
+
+        "probability":
+            probability,
+
+        "y_valid":
+            y_valid,
+
+        "X_valid_processed":
+            X_valid_processed,
+
+    }
+
+
+# ============================================================
+# 18. Expanding Window 실험
+# ============================================================
+
+fold_results = []
+
+
+COVID_MODES = [
+    "포함",
+    "제외",
+]
+
+
+for covid_mode in COVID_MODES:
+
+    print("\n")
+    print("=" * 80)
+
+    print(
+        f"COVID {covid_mode}"
+    )
+
+    print("=" * 80)
+
+
+    for fold_info in VALIDATION_FOLDS:
+
+        fold = fold_info[
+            "Fold"
+        ]
+
+        train_end = pd.Timestamp(
+            fold_info[
+                "Train_End"
+            ]
+        )
+
+        valid_start = pd.Timestamp(
+            fold_info[
+                "Valid_Start"
+            ]
+        )
+
+        valid_end = pd.Timestamp(
+            fold_info[
+                "Valid_End"
+            ]
+        )
+
+        valid_name = (
+            fold_info[
+                "Valid_Name"
+            ]
+        )
+
+
+        # ----------------------------------------------------
+        # Expanding Train
+        # ----------------------------------------------------
+
+        base_train = df[
+
+            (
+                df["t0"]
+                >= TRAIN_START
+            )
+
+            &
+
+            (
+                df["t0"]
+                <= train_end
+            )
+
+        ].copy()
+
+
+        # ----------------------------------------------------
+        # COVID 포함 / 제외
+        # ----------------------------------------------------
+
+        train_df = apply_covid_filter(
+
+            base_train,
+            covid_mode,
+
+        )
+
+
+        # ----------------------------------------------------
+        # Validation은 절대 COVID 실험에 따라 변경하지 않음
+        # ----------------------------------------------------
+
+        valid_df = df[
+
+            (
+                df["t0"]
+                >= valid_start
+            )
+
+            &
+
+            (
+                df["t0"]
+                <= valid_end
+            )
+
+        ].copy()
+
+
+        # 관측 가능 Label
+        train_observed = (
+            train_df[
+                train_df[
+                    "event_target"
+                ].notna()
+            ]
+        )
+
+        valid_observed = (
+            valid_df[
+                valid_df[
+                    "event_target"
+                ].notna()
+            ]
+        )
+
+
+        print("\n" + "-" * 80)
+
+        print(
+            f"Fold {fold} / "
+            f"{valid_name}"
+        )
+
+        print(
+            f"Train: "
+            f"2019-01-01 ~ "
+            f"{train_end.date()}"
+        )
+
+        print(
+            f"COVID: {covid_mode}"
+        )
+
+        print(
+            f"Train N: "
+            f"{len(train_observed):,}"
+        )
+
+        print(
+            f"Valid N: "
+            f"{len(valid_observed):,}"
+        )
+
+        print(
+            f"Valid 폐업: "
+            f"{int((valid_observed['event_target'] == 1).sum()):,}"
+        )
+
+        print("-" * 80)
+
+
+        # ----------------------------------------------------
+        # Model × Imbalance
+        # ----------------------------------------------------
+
+        for imbalance_method in (
+            IMBALANCE_METHODS
+        ):
+
+            for model_name in [
+
+                "RandomForest",
+                "XGBoost",
+                "LightGBM",
+
+            ]:
+
+                try:
+
+                    result = (
+                        run_single_fold(
+
+                            train_df=
+                                train_df,
+
+                            valid_df=
+                                valid_df,
+
+                            model_name=
+                                model_name,
+
+                            imbalance_method=
+                                imbalance_method,
+
+                        )
+                    )
+
+
+                    row = {
+
+                        "Horizon":
+                            TARGET_HORIZON,
+
+                        "COVID":
+                            covid_mode,
+
+                        "Fold":
+                            fold,
+
+                        "Validation":
+                            valid_name,
+
+                        "Train_Start":
+                            TRAIN_START,
+
+                        "Train_End":
+                            train_end,
+
+                        "Valid_Start":
+                            valid_start,
+
+                        "Valid_End":
+                            valid_end,
+
+                        "Train_N":
+                            len(
+                                train_observed
+                            ),
+
+                        "Valid_N":
+                            len(
+                                valid_observed
+                            ),
+
+                        "Model":
+                            model_name,
+
+                        "Imbalance":
+                            imbalance_method,
+
+                        **result[
+                            "metrics"
+                        ],
+
+                    }
+
+
+                    fold_results.append(
+                        row
+                    )
+
+
+                    print(
+
+                        f"[완료] "
+                        f"{model_name:<12} "
+                        f"{imbalance_method:<12} "
+
+                        f"PR-AUC="
+                        f"{row['PR_AUC']:.4f} "
+
+                        f"F1="
+                        f"{row['F1_Closure']:.4f}"
+
+                    )
+
+
+                except Exception as e:
+
+                    print(
+
+                        f"[SKIP] "
+                        f"{model_name} / "
+                        f"{imbalance_method} / "
+                        f"{e}"
+
+                    )
+
+
+# ============================================================
+# 19. Fold 결과 저장
+# ============================================================
+
+fold_results_df = pd.DataFrame(
+    fold_results
+)
+
+
+if fold_results_df.empty:
+
+    raise RuntimeError(
+        "성공한 검증 결과가 없습니다."
+    )
+
+
+fold_results_df.to_csv(
+
+    METRIC_DIR
+    / "expanding_window_fold_results.csv",
+
+    index=False,
+
+    encoding="utf-8-sig",
+
+)
+
+
+# ============================================================
+# 20. Fold 평균 성능
+# ============================================================
+
+METRIC_COLUMNS = [
+
+    "PR_AUC",
+    "ROC_AUC",
+
+    "Precision_Closure",
+    "Recall_Closure",
+    "F1_Closure",
+
+    "Balanced_Accuracy",
+    "Accuracy",
+
+]
+
+
+mean_results_df = (
+
+    fold_results_df
+
+    .groupby(
+        [
+            "COVID",
+            "Model",
+            "Imbalance",
+        ],
+        as_index=False,
+    )
+
+    .agg(
+
+        Fold_Count=(
+            "Fold",
+            "nunique",
+        ),
+
+        Mean_PR_AUC=(
+            "PR_AUC",
+            "mean",
+        ),
+
+        Std_PR_AUC=(
+            "PR_AUC",
+            "std",
+        ),
+
+        Mean_ROC_AUC=(
+            "ROC_AUC",
+            "mean",
+        ),
+
+        Std_ROC_AUC=(
+            "ROC_AUC",
+            "std",
+        ),
+
+        Mean_Precision_Closure=(
+            "Precision_Closure",
+            "mean",
+        ),
+
+        Mean_Recall_Closure=(
+            "Recall_Closure",
+            "mean",
+        ),
+
+        Mean_F1_Closure=(
+            "F1_Closure",
+            "mean",
+        ),
+
+        Mean_Balanced_Accuracy=(
+            "Balanced_Accuracy",
+            "mean",
+        ),
+
+        Mean_Accuracy=(
+            "Accuracy",
+            "mean",
+        ),
+
+    )
+
+)
+
+
+# 5 Fold 전부 성공한 조합 우선
+mean_results_df[
+    "All_Folds"
+] = (
+    mean_results_df[
+        "Fold_Count"
+    ]
+    == len(
+        VALIDATION_FOLDS
+    )
+)
+
+
+mean_results_df = (
+
+    mean_results_df
+
+    .sort_values(
+
+        [
+
+            "All_Folds",
+            "Mean_PR_AUC",
+            "Mean_F1_Closure",
+            "Mean_Recall_Closure",
+
+        ],
+
+        ascending=[
+            False,
+            False,
+            False,
+            False,
+        ],
+
+    )
+
+    .reset_index(
+        drop=True
+    )
+
+)
+
+
+mean_results_df.to_csv(
+
+    METRIC_DIR
+    / "expanding_window_mean_results.csv",
+
+    index=False,
+
+    encoding="utf-8-sig",
+
+)
+
+
+# ============================================================
+# 21. Fold별 Pivot
+# ============================================================
+
+fold_pivot = (
+
+    fold_results_df
+
+    .pivot_table(
+
+        index=[
+            "COVID",
+            "Model",
+            "Imbalance",
+        ],
+
+        columns=
+            "Validation",
+
+        values=
+            "PR_AUC",
+
+        aggfunc="mean",
+
+    )
+
+    .reset_index()
+
+)
+
+
+fold_pivot[
+    "평균_PR_AUC"
+] = (
+
+    fold_results_df
+
+    .groupby(
+        [
+            "COVID",
+            "Model",
+            "Imbalance",
+        ]
+    )[
+        "PR_AUC"
+    ]
+
+    .mean()
+
+    .values
+
+)
+
+
+fold_pivot.to_csv(
+
+    METRIC_DIR
+    / "fold_pr_auc_table.csv",
+
+    index=False,
+
+    encoding="utf-8-sig",
+
+)
+
+
+# ============================================================
+# 22. COVID 포함 vs 제외 비교
+# ============================================================
+
+covid_comparison = (
+
+    mean_results_df
+
+    .pivot_table(
+
+        index=[
+            "Model",
+            "Imbalance",
+        ],
+
+        columns="COVID",
+
+        values=[
+            "Mean_PR_AUC",
+            "Mean_ROC_AUC",
+            "Mean_F1_Closure",
+            "Mean_Recall_Closure",
+            "Mean_Precision_Closure",
+            "Mean_Balanced_Accuracy",
+        ],
+
+    )
+
+)
+
+
+covid_comparison.columns = [
+
+    f"{metric}_{covid}"
+
+    for metric, covid
+    in covid_comparison.columns
+
+]
+
+
+covid_comparison = (
+    covid_comparison
+    .reset_index()
+)
+
+
+# 차이: 제외 - 포함
+for metric in [
+
+    "Mean_PR_AUC",
+    "Mean_ROC_AUC",
+    "Mean_F1_Closure",
+    "Mean_Recall_Closure",
+    "Mean_Precision_Closure",
+    "Mean_Balanced_Accuracy",
+
+]:
+
+    included = (
+        f"{metric}_포함"
+    )
+
+    excluded = (
+        f"{metric}_제외"
+    )
+
+    if (
+        included
+        in covid_comparison.columns
+
+        and
+
+        excluded
+        in covid_comparison.columns
+    ):
+
+        covid_comparison[
+            f"{metric}_차이_제외-포함"
+        ] = (
+
+            covid_comparison[
+                excluded
+            ]
+
+            -
+
+            covid_comparison[
+                included
+            ]
+
+        )
+
+
+covid_comparison.to_csv(
+
+    METRIC_DIR
+    / "covid_performance_comparison.csv",
+
+    index=False,
+
+    encoding="utf-8-sig",
+
+)
+
+
+# ============================================================
+# 23. 평균 결과 출력
+# ============================================================
+
+print("\n")
+print("=" * 100)
+
+print(
+    "5-Fold 평균 성능"
+)
+
+print("=" * 100)
+
+
+display_cols = [
+
+    "COVID",
+    "Model",
+    "Imbalance",
+    "Fold_Count",
+
+    "Mean_PR_AUC",
+    "Std_PR_AUC",
+
+    "Mean_ROC_AUC",
+
+    "Mean_Precision_Closure",
+    "Mean_Recall_Closure",
+    "Mean_F1_Closure",
+
+    "Mean_Balanced_Accuracy",
+
+]
+
+
+print(
+
+    mean_results_df[
+        display_cols
+    ]
+
+    .round(4)
+
+    .to_string(
+        index=False
+    )
+
+)
+
+
+# ============================================================
+# 24. 최종 조합 선택
+#
+# 5개 Fold 모두 성공한 조합 중
+# 평균 PR-AUC 기준
+# ============================================================
+
+candidate_results = (
+
+    mean_results_df[
+        mean_results_df[
+            "All_Folds"
+        ]
+    ]
+
+    .copy()
+
+)
+
+
+if candidate_results.empty:
+
+    candidate_results = (
+        mean_results_df.copy()
+    )
+
+
+best_row = (
+    candidate_results.iloc[0]
+)
+
+
+BEST_COVID = (
+    best_row["COVID"]
+)
+
+BEST_MODEL = (
+    best_row["Model"]
+)
+
+BEST_IMBALANCE = (
+    best_row["Imbalance"]
+)
+
+
+print("\n")
+print("=" * 80)
+
+print(
+    "최종 학습 조합"
+)
+
+print("=" * 80)
+
+
+print(
+    f"COVID      : "
+    f"{BEST_COVID}"
+)
+
+print(
+    f"Model      : "
+    f"{BEST_MODEL}"
+)
+
+print(
+    f"Imbalance  : "
+    f"{BEST_IMBALANCE}"
+)
+
+print(
+    f"평균 PR-AUC: "
+    f"{best_row['Mean_PR_AUC']:.4f}"
+)
+
+print(
+    f"평균 F1    : "
+    f"{best_row['Mean_F1_Closure']:.4f}"
+)
+
+
+# ============================================================
+# 25. 최종 학습 데이터
+#
+# 2019-01-01 ~ 2025-06-30
+#
+# 반드시 Y 관측 가능한 행만 학습
+# ============================================================
+
+final_train_df = df[
+
+    (
+        df["t0"]
+        >= TRAIN_START
+    )
+
+    &
+
+    (
+        df["t0"]
+        <= FINAL_TRAIN_END
+    )
+
+    &
+
+    (
+        df[
+            "event_target"
+        ].notna()
+    )
+
+].copy()
+
+
+final_train_df = (
+    apply_covid_filter(
+
+        final_train_df,
+
+        BEST_COVID,
+
+    )
+)
+
+
+# ============================================================
+# 26. 2025 하반기 예측 대상
+#
+# 여기서는 Y 존재 여부와 관계없이
+# t0가 2025H2인 모든 행을 예측 대상으로 사용
+# ============================================================
+
+final_predict_df = df[
+
+    (
+        df["t0"]
+        >= FINAL_PREDICT_START
+    )
+
+    &
+
+    (
+        df["t0"]
+        <= FINAL_PREDICT_END
+    )
+
+].copy()
+
+
+print("\n")
+print("=" * 80)
+
+print(
+    "최종 학습 / 예측 데이터"
+)
+
+print("=" * 80)
+
+
+print(
+    f"Train: "
+    f"{len(final_train_df):,}"
+)
+
+print(
+    f"2025H2 예측 대상: "
+    f"{len(final_predict_df):,}"
+)
+
+
+if len(final_train_df) == 0:
+
+    raise RuntimeError(
+        "최종 학습 데이터가 없습니다."
+    )
+
+
+if len(final_predict_df) == 0:
+
+    raise RuntimeError(
+        "2025 하반기 예측 대상이 없습니다."
+    )
+
+
+# ============================================================
+# 27. 최종 X/y
+# ============================================================
+
+X_final_train = (
+    final_train_df[
+        feature_columns
+    ]
+    .copy()
+)
+
+
+y_final_train = (
+    final_train_df[
+        "event_target"
+    ]
+    .astype(int)
+)
+
+
+X_final_predict = (
+    final_predict_df[
+        feature_columns
+    ]
+    .copy()
+)
+
+
+# ============================================================
+# 28. 최종 전처리
+# ============================================================
+
+(
+    final_preprocessor,
+    final_numeric_cols,
+    final_categorical_cols,
+
+) = create_preprocessor(
+    X_final_train
+)
+
+
+X_final_train_processed = (
+
+    final_preprocessor
+
+    .fit_transform(
+        X_final_train
+    )
+
+)
+
+
+X_final_predict_processed = (
+
+    final_preprocessor
+
+    .transform(
+        X_final_predict
+    )
+
+)
+
+
+# ============================================================
+# 29. Feature 이름
+# ============================================================
+
+final_feature_names = (
+
+    final_preprocessor
+    .get_feature_names_out()
+
+)
+
+
+final_feature_names = [
+
+    feature
+
+    .replace(
+        "numeric__",
+        ""
+    )
+
+    .replace(
+        "categorical__",
+        ""
+    )
+
+    for feature
+    in final_feature_names
+
+]
+
+
+# ============================================================
+# 30. 최종 class imbalance
+# ============================================================
+
+n_survival = (
+    y_final_train == 0
+).sum()
+
+n_closure = (
+    y_final_train == 1
+).sum()
+
+
+if n_closure == 0:
+
+    raise RuntimeError(
+        "최종 학습 데이터에 "
+        "폐업 클래스가 없습니다."
+    )
+
+
+final_scale_pos_weight = (
+    n_survival
+    / n_closure
+)
+
+
+# ============================================================
+# 31. 최종 모델
+# ============================================================
+
+use_class_weight = (
+    BEST_IMBALANCE
+    == "ClassWeight"
+)
+
+
+final_models = get_models(
+
+    scale_pos_weight=
+        final_scale_pos_weight,
+
+    use_class_weight=
+        use_class_weight,
+
+)
+
+
+final_model = (
+    final_models[
+        BEST_MODEL
+    ]
+)
+
+
+# ============================================================
+# 32. 최종 Sampling
+# ============================================================
+
+if BEST_IMBALANCE in [
+
+    "RandomOver",
+    "RandomUnder",
+    "SMOTE",
+
+]:
+
+    sampler = get_sampler(
+        BEST_IMBALANCE
+    )
+
+
+    if BEST_IMBALANCE == "SMOTE":
+
+        minority_count = (
+            y_final_train
+            .value_counts()
+            .min()
+        )
+
+
+        if minority_count <= 5:
+
+            sampler = SMOTE(
+
+                random_state=
+                    RANDOM_STATE,
+
+                k_neighbors=
+                    max(
+                        1,
+                        minority_count - 1
+                    ),
+
+            )
+
+
+    (
+        X_final_fit,
+        y_final_fit,
+
+    ) = sampler.fit_resample(
+
+        X_final_train_processed,
+        y_final_train,
+
+    )
+
+
+else:
+
+    X_final_fit = (
+        X_final_train_processed
+    )
+
+    y_final_fit = (
+        y_final_train.to_numpy()
+    )
+
+
+# ============================================================
+# 33. 최종 모델 학습
+# ============================================================
+
+print("\n")
+print("=" * 80)
+
+print(
+    "최종 모델 학습"
+)
+
+print("=" * 80)
+
+
+final_model.fit(
+
+    X_final_fit,
+    y_final_fit,
+
+)
+
+
+# ============================================================
+# 34. 2025H2 예측
+# ============================================================
+
+final_probability = (
+
+    final_model
+
+    .predict_proba(
+        X_final_predict_processed
+    )[:, 1]
+
+)
+
+
+final_prediction = (
+
+    final_model
+
+    .predict(
+        X_final_predict_processed
+    )
+
+)
+
+
+# ============================================================
+# 35. 예측 결과
+# ============================================================
+
+prediction_output = (
+    final_predict_df.copy()
+)
+
+
+prediction_output[
+    "폐업예측확률"
+] = final_probability
+
+
+prediction_output[
+    "예측폐업여부"
+] = final_prediction
+
+
+prediction_output[
+    "예측결과"
+] = np.where(
+
+    prediction_output[
+        "예측폐업여부"
+    ] == 1,
+
+    "폐업",
+
+    "생존",
+
+)
+
+
+# 위험도 순
+prediction_output = (
+
+    prediction_output
+
+    .sort_values(
+        "폐업예측확률",
+        ascending=False,
+    )
+
+    .reset_index(
+        drop=True
+    )
+
+)
+
+
+prediction_output.to_csv(
+
+    PREDICTION_DIR
+    / "2025H2_closure_predictions.csv",
+
+    index=False,
+
+    encoding="utf-8-sig",
+
+)
+
+
+# ============================================================
+# 36. 2025H2 실제 Label이 존재하는 경우 성능도 계산
+#
+# 없는 경우 그냥 미래예측 결과만 저장
+# ============================================================
+
+observed_2025h2_mask = (
+    final_predict_df[
+        "event_target"
+    ].notna()
+)
+
+
+if observed_2025h2_mask.sum() > 0:
+
+    observed_indices = np.where(
+        observed_2025h2_mask
+    )[0]
+
+
+    y_2025h2 = (
+
+        final_predict_df.loc[
+            observed_2025h2_mask,
+            "event_target"
+        ]
+
+        .astype(int)
+
+    )
+
+
+    pred_2025h2 = (
+        final_prediction[
+            observed_indices
+        ]
+    )
+
+
+    prob_2025h2 = (
+        final_probability[
+            observed_indices
+        ]
+    )
+
+
+    observed_metrics = {
+
+        "Observed_N":
+            len(y_2025h2),
+
+        "Accuracy":
+            accuracy_score(
+                y_2025h2,
+                pred_2025h2,
+            ),
+
+        "Balanced_Accuracy":
+            balanced_accuracy_score(
+                y_2025h2,
+                pred_2025h2,
+            ),
+
+        "Precision_Closure":
+            precision_score(
+                y_2025h2,
+                pred_2025h2,
+                zero_division=0,
+            ),
+
+        "Recall_Closure":
+            recall_score(
+                y_2025h2,
+                pred_2025h2,
+                zero_division=0,
+            ),
+
+        "F1_Closure":
+            f1_score(
+                y_2025h2,
+                pred_2025h2,
+                zero_division=0,
+            ),
+
+    }
+
+
+    if y_2025h2.nunique() >= 2:
+
+        observed_metrics[
+            "ROC_AUC"
+        ] = roc_auc_score(
+
+            y_2025h2,
+            prob_2025h2,
+
+        )
+
+
+    if (
+        y_2025h2 == 1
+    ).sum() > 0:
+
+        observed_metrics[
+            "PR_AUC"
+        ] = average_precision_score(
+
+            y_2025h2,
+            prob_2025h2,
+
+        )
+
+
+    pd.DataFrame(
+        [observed_metrics]
+    ).to_csv(
+
+        METRIC_DIR
+        / "2025H2_observed_performance.csv",
+
+        index=False,
+
+        encoding="utf-8-sig",
+
+    )
+
+
+# ============================================================
+# 37. 최종 Feature Importance
+# ============================================================
+
+if hasattr(
+    final_model,
+    "feature_importances_"
+):
+
+    importance_df = pd.DataFrame({
+
+        "변수":
+            final_feature_names,
+
+        "중요도":
+            final_model
+            .feature_importances_,
+
+    })
 
 
     importance_df = (
@@ -1512,15 +2637,10 @@ def save_feature_importance(
     )
 
 
-    # CSV
-
     importance_df.to_csv(
 
         IMPORTANCE_DIR
-        / (
-            f"{model_name}_"
-            f"{imbalance_name}.csv"
-        ),
+        / "final_model_feature_importance.csv",
 
         index=False,
 
@@ -1528,8 +2648,6 @@ def save_feature_importance(
 
     )
 
-
-    # Top 20
 
     top20 = (
         importance_df
@@ -1558,10 +2676,10 @@ def save_feature_importance(
 
     ax.set_title(
 
-        f"{TARGET_HORIZON} "
-        f"변수 중요도 Top 20\n"
-        f"{model_name} / "
-        f"{imbalance_name}"
+        f"최종 모델 Feature Importance\n"
+        f"{BEST_MODEL} / "
+        f"{BEST_IMBALANCE} / "
+        f"COVID {BEST_COVID}"
 
     )
 
@@ -1569,7 +2687,6 @@ def save_feature_importance(
     ax.set_xlabel(
         "Feature Importance"
     )
-
 
     ax.set_ylabel(
         "변수"
@@ -1582,10 +2699,7 @@ def save_feature_importance(
     plt.savefig(
 
         IMPORTANCE_DIR
-        / (
-            f"{model_name}_"
-            f"{imbalance_name}.png"
-        ),
+        / "final_model_feature_importance.png",
 
         dpi=200,
 
@@ -1598,592 +2712,44 @@ def save_feature_importance(
 
 
 # ============================================================
-# 24. 결과 저장 객체
-# ============================================================
-
-results = []
-
-trained_models = {}
-
-
-# ============================================================
-# 25. Sampling 실험
-# ============================================================
-
-for (
-    imbalance_name,
-    sampler
-) in SAMPLERS.items():
-
-
-    print("\n")
-    print("=" * 70)
-
-    print(
-        f"불균형 처리: "
-        f"{imbalance_name}"
-    )
-
-    print("=" * 70)
-
-
-    # --------------------------------------------------------
-    # Sampling
-    # --------------------------------------------------------
-
-    if sampler is None:
-
-        X_resampled = (
-            X_train_processed
-        )
-
-        y_resampled = (
-            y_train.to_numpy()
-        )
-
-
-    else:
-
-        try:
-
-            X_resampled, \
-            y_resampled = (
-
-                sampler
-                .fit_resample(
-
-                    X_train_processed,
-
-                    y_train,
-
-                )
-
-            )
-
-        except ValueError as e:
-
-            print(
-                f"[SKIP] "
-                f"{imbalance_name}: "
-                f"{e}"
-            )
-
-            continue
-
-
-    unique_values, counts = (
-        np.unique(
-
-            y_resampled,
-
-            return_counts=True,
-
-        )
-    )
-
-
-    print(
-        "학습 Label:"
-    )
-
-
-    print(
-        dict(
-            zip(
-                unique_values,
-                counts,
-            )
-        )
-    )
-
-
-    # --------------------------------------------------------
-    # Models
-    # --------------------------------------------------------
-
-    models = get_models(
-        use_class_weight=False
-    )
-
-
-    for (
-        model_name,
-        model
-    ) in models.items():
-
-
-        print(
-            f"\n[학습] "
-            f"{model_name} "
-            f"/ {imbalance_name}"
-        )
-
-
-        # ----------------------------------------------------
-        # Train
-        # ----------------------------------------------------
-
-        model.fit(
-
-            X_resampled,
-
-            y_resampled,
-
-        )
-
-
-        # ----------------------------------------------------
-        # Evaluation
-        # ----------------------------------------------------
-
-        (
-            metrics,
-            prediction,
-            probability,
-
-        ) = evaluate_model(
-
-            model,
-
-            X_test_processed,
-
-            y_test,
-
-        )
-
-
-        # ----------------------------------------------------
-        # Result
-        # ----------------------------------------------------
-
-        result_row = {
-
-            "Horizon":
-                TARGET_HORIZON,
-
-            "Model":
-                model_name,
-
-            "Imbalance":
-                imbalance_name,
-
-            **metrics,
-
-        }
-
-
-        results.append(
-            result_row
-        )
-
-
-        # ----------------------------------------------------
-        # Model 저장
-        # ----------------------------------------------------
-
-        trained_models[
-            (
-                model_name,
-                imbalance_name,
-            )
-        ] = model
-
-
-        # ----------------------------------------------------
-        # Plot
-        # ----------------------------------------------------
-
-        save_evaluation_plots(
-
-            model_name,
-
-            imbalance_name,
-
-            y_test,
-
-            prediction,
-
-            probability,
-
-        )
-
-
-        # ----------------------------------------------------
-        # Importance
-        # ----------------------------------------------------
-
-        save_feature_importance(
-
-            model,
-
-            model_name,
-
-            imbalance_name,
-
-        )
-
-
-# ============================================================
-# 26. Class Weight 실험
+# 38. 최종 SHAP
 # ============================================================
 
 print("\n")
-print("=" * 70)
+print("=" * 80)
 
 print(
-    "불균형 처리: "
-    "ClassWeight"
+    "최종 모델 SHAP"
 )
 
-print("=" * 70)
+print("=" * 80)
 
 
-weighted_models = (
-    get_models(
-        use_class_weight=True
-    )
-)
+SHAP_SUCCESS = False
+shap_importance = None
 
 
-for (
-    model_name,
-    model
-) in weighted_models.items():
+try:
 
-
-    imbalance_name = (
-        "ClassWeight"
+    SHAP_SAMPLE_SIZE = min(
+        2000,
+        len(
+            X_final_predict_processed
+        ),
     )
 
 
-    print(
-        f"\n[학습] "
-        f"{model_name} "
-        f"/ {imbalance_name}"
-    )
-
-
-    model.fit(
-
-        X_train_processed,
-
-        y_train,
-
-    )
-
-
-    (
-        metrics,
-        prediction,
-        probability,
-
-    ) = evaluate_model(
-
-        model,
-
-        X_test_processed,
-
-        y_test,
-
-    )
-
-
-    result_row = {
-
-        "Horizon":
-            TARGET_HORIZON,
-
-        "Model":
-            model_name,
-
-        "Imbalance":
-            imbalance_name,
-
-        **metrics,
-
-    }
-
-
-    results.append(
-        result_row
-    )
-
-
-    trained_models[
-        (
-            model_name,
-            imbalance_name,
+    rng = (
+        np.random.default_rng(
+            RANDOM_STATE
         )
-    ] = model
-
-
-    save_evaluation_plots(
-
-        model_name,
-
-        imbalance_name,
-
-        y_test,
-
-        prediction,
-
-        probability,
-
     )
 
 
-    save_feature_importance(
-
-        model,
-
-        model_name,
-
-        imbalance_name,
-
-    )
-
-
-# ============================================================
-# 27. 결과 DataFrame
-# ============================================================
-
-results_df = pd.DataFrame(
-    results
-)
-
-
-if results_df.empty:
-
-    raise RuntimeError(
-        "성공적으로 학습된 "
-        "모델이 없습니다."
-    )
-
-
-# ============================================================
-# 28. 결과 정렬
-# ============================================================
-
-# 불균형 데이터에서는
-# PR-AUC를 우선 기준으로 사용
-
-results_df = (
-
-    results_df
-
-    .sort_values(
-
-        [
-
-            "PR_AUC",
-            "F1_Closure",
-            "Recall_Closure",
-
-        ],
-
-        ascending=[
-
-            False,
-            False,
-            False,
-
-        ],
-
-    )
-
-    .reset_index(
-        drop=True
-    )
-
-)
-
-
-# ============================================================
-# 29. 결과 저장
-# ============================================================
-
-results_df.to_csv(
-
-    METRIC_DIR
-    / "model_comparison.csv",
-
-    index=False,
-
-    encoding="utf-8-sig",
-
-)
-
-
-print("\n")
-print("=" * 70)
-
-print(
-    "전체 모델 비교"
-)
-
-print("=" * 70)
-
-
-display_columns = [
-
-    "Model",
-    "Imbalance",
-    "PR_AUC",
-    "ROC_AUC",
-    "Precision_Closure",
-    "Recall_Closure",
-    "F1_Closure",
-    "Balanced_Accuracy",
-    "Accuracy",
-
-]
-
-
-print(
-
-    results_df[
-        display_columns
-    ]
-
-    .round(4)
-
-    .to_string(
-        index=False
-    )
-
-)
-
-
-# ============================================================
-# 30. 최상위 모델
-# ============================================================
-
-# 주의:
-# 여기서 "best"는
-# 단순히 PR-AUC가 가장 높은 실험 조합을 의미함.
-# 최종 운영모델 선정은 별도 검증 필요.
-
-best_row = (
-    results_df.iloc[0]
-)
-
-
-best_model_name = (
-    best_row[
-        "Model"
-    ]
-)
-
-
-best_method = (
-    best_row[
-        "Imbalance"
-    ]
-)
-
-
-best_model = (
-
-    trained_models[
-        (
-            best_model_name,
-            best_method,
-        )
-    ]
-
-)
-
-
-print("\n")
-print("=" * 70)
-
-print(
-    "PR-AUC 기준 "
-    "상위 모델"
-)
-
-print("=" * 70)
-
-
-print(
-    f"Model       : "
-    f"{best_model_name}"
-)
-
-
-print(
-    f"Imbalance   : "
-    f"{best_method}"
-)
-
-
-print(
-    f"PR-AUC      : "
-    f"{best_row['PR_AUC']:.4f}"
-)
-
-
-print(
-    f"ROC-AUC     : "
-    f"{best_row['ROC_AUC']:.4f}"
-)
-
-
-print(
-    f"폐업 Recall : "
-    f"{best_row['Recall_Closure']:.4f}"
-)
-
-
-print(
-    f"폐업 Precision : "
-    f"{best_row['Precision_Closure']:.4f}"
-)
-
-
-print(
-    f"폐업 F1     : "
-    f"{best_row['F1_Closure']:.4f}"
-)
-
-
-# ============================================================
-# 31. SHAP 데이터 Sampling
-# ============================================================
-
-print("\n")
-print("=" * 70)
-
-print(
-    "SHAP 분석 시작"
-)
-
-print("=" * 70)
-
-
-SHAP_SAMPLE_SIZE = min(
-
-    2000,
-
-    len(
-        X_test_processed
-    ),
-
-)
-
-
-rng = (
-    np.random.default_rng(
-        RANDOM_STATE
-    )
-)
-
-
-sample_indices = (
-    rng.choice(
+    sample_indices = rng.choice(
 
         len(
-            X_test_processed
+            X_final_predict_processed
         ),
 
         size=
@@ -2192,39 +2758,30 @@ sample_indices = (
         replace=False,
 
     )
-)
 
 
-X_shap = (
+    X_shap = (
 
-    X_test_processed[
-        sample_indices
-    ]
+        X_final_predict_processed[
+            sample_indices
+        ]
 
-)
+    )
 
 
-X_shap_df = (
-    pd.DataFrame(
+    X_shap_df = pd.DataFrame(
 
         X_shap,
 
         columns=
-            feature_names,
+            final_feature_names,
 
     )
-)
 
-
-# ============================================================
-# 32. SHAP 계산
-# ============================================================
-
-try:
 
     explainer = (
         shap.TreeExplainer(
-            best_model
+            final_model
         )
     )
 
@@ -2241,13 +2798,8 @@ try:
     )
 
 
-    # --------------------------------------------------------
-    # Binary classifier 처리
-    # --------------------------------------------------------
-
     if shap_values.ndim == 3:
 
-        # class 1 = 폐업
         closure_shap_values = (
 
             shap_values[
@@ -2265,9 +2817,9 @@ try:
         )
 
 
-    # ========================================================
-    # 33. SHAP Summary Plot
-    # ========================================================
+    # --------------------------------------------------------
+    # Summary
+    # --------------------------------------------------------
 
     plt.figure(
         figsize=(11, 9)
@@ -2289,10 +2841,12 @@ try:
 
     plt.title(
 
-        f"{TARGET_HORIZON} "
-        f"폐업 예측 SHAP Summary\n"
-        f"{best_model_name} / "
-        f"{best_method}"
+        "2025H2 폐업 예측 "
+        "SHAP Summary\n"
+
+        f"{BEST_MODEL} / "
+        f"{BEST_IMBALANCE} / "
+        f"COVID {BEST_COVID}"
 
     )
 
@@ -2303,10 +2857,7 @@ try:
     plt.savefig(
 
         SHAP_DIR
-        / (
-            "best_model_"
-            "shap_summary.png"
-        ),
+        / "final_model_shap_summary.png",
 
         dpi=200,
 
@@ -2318,9 +2869,9 @@ try:
     plt.close("all")
 
 
-    # ========================================================
-    # 34. SHAP 중요도
-    # ========================================================
+    # --------------------------------------------------------
+    # SHAP Importance
+    # --------------------------------------------------------
 
     mean_abs_shap = (
 
@@ -2335,21 +2886,15 @@ try:
     )
 
 
-    shap_importance = (
-        pd.DataFrame(
+    shap_importance = pd.DataFrame({
 
-            {
+        "변수":
+            final_feature_names,
 
-                "변수":
-                    feature_names,
+        "평균절대SHAP":
+            mean_abs_shap,
 
-                "평균절대SHAP":
-                    mean_abs_shap,
-
-            }
-
-        )
-    )
+    })
 
 
     shap_importance = (
@@ -2357,11 +2902,8 @@ try:
         shap_importance
 
         .sort_values(
-
             "평균절대SHAP",
-
             ascending=False,
-
         )
 
         .reset_index(
@@ -2371,17 +2913,10 @@ try:
     )
 
 
-    # ========================================================
-    # 35. SHAP CSV
-    # ========================================================
-
     shap_importance.to_csv(
 
         SHAP_DIR
-        / (
-            "best_model_"
-            "shap_importance.csv"
-        ),
+        / "final_model_shap_importance.csv",
 
         index=False,
 
@@ -2390,16 +2925,10 @@ try:
     )
 
 
-    # ========================================================
-    # 36. SHAP Bar
-    # ========================================================
-
     shap_top20 = (
-
         shap_importance
         .head(20)
         .copy()
-
     )
 
 
@@ -2422,19 +2951,14 @@ try:
 
 
     ax.set_title(
-
-        f"{TARGET_HORIZON} "
-        f"폐업 예측 SHAP 중요도 Top 20\n"
-        f"{best_model_name} / "
-        f"{best_method}"
-
+        "2025H2 폐업 예측 "
+        "SHAP 중요도 Top 20"
     )
 
 
     ax.set_xlabel(
         "평균 |SHAP value|"
     )
-
 
     ax.set_ylabel(
         "변수"
@@ -2447,10 +2971,7 @@ try:
     plt.savefig(
 
         SHAP_DIR
-        / (
-            "best_model_"
-            "shap_bar.png"
-        ),
+        / "final_model_shap_bar.png",
 
         dpi=200,
 
@@ -2467,241 +2988,255 @@ try:
 
 except Exception as e:
 
-    SHAP_SUCCESS = False
-
-    shap_importance = None
-
     print(
-        "\n[SHAP 오류]"
-    )
-
-    print(
-        str(e)
+        f"[SHAP 오류] {e}"
     )
 
 
 # ============================================================
-# 37. 사람이 읽을 수 있는 요약 생성
+# 39. Fold PR-AUC 그래프
+# ============================================================
+
+for covid_mode in COVID_MODES:
+
+    subset = (
+        fold_results_df[
+            fold_results_df[
+                "COVID"
+            ] == covid_mode
+        ]
+    )
+
+
+    # 최종 조합과 동일한 조합
+    subset = subset[
+
+        (
+            subset[
+                "Model"
+            ]
+            == BEST_MODEL
+        )
+
+        &
+
+        (
+            subset[
+                "Imbalance"
+            ]
+            == BEST_IMBALANCE
+        )
+
+    ]
+
+
+    if len(subset) > 0:
+
+        fig, ax = plt.subplots(
+            figsize=(9, 5)
+        )
+
+
+        ax.plot(
+
+            subset[
+                "Validation"
+            ],
+
+            subset[
+                "PR_AUC"
+            ],
+
+            marker="o",
+
+        )
+
+
+        ax.set_title(
+
+            f"Expanding Window PR-AUC\n"
+            f"{BEST_MODEL} / "
+            f"{BEST_IMBALANCE} / "
+            f"COVID {covid_mode}"
+
+        )
+
+
+        ax.set_xlabel(
+            "검증 기간"
+        )
+
+        ax.set_ylabel(
+            "PR-AUC"
+        )
+
+
+        plt.tight_layout()
+
+
+        plt.savefig(
+
+            FIGURE_DIR
+            / (
+                f"fold_pr_auc_"
+                f"covid_{covid_mode}.png"
+            ),
+
+            dpi=200,
+
+            bbox_inches="tight",
+
+        )
+
+
+        plt.close(fig)
+
+
+# ============================================================
+# 40. 결과 요약
 # ============================================================
 
 summary = []
 
 
 summary.append(
-    "Business Crisis Cohort 모델링 결과"
+    "Business Crisis Cohort "
+    "시간순 검증 결과"
 )
 
 summary.append(
-    "=" * 60
+    "=" * 70
 )
 
+summary.append("")
 
 summary.append(
-    f"예측 기간: "
+    f"예측 Horizon: "
     f"{TARGET_HORIZON}"
 )
 
+summary.append("")
 
 summary.append(
-    f"분석 대상 사업체: "
-    f"{len(model_df):,}개"
+    "[Expanding Window]"
 )
 
+summary.append(
+    "Fold1: 2019~2022H2 "
+    "-> 2023H1"
+)
+
+summary.append(
+    "Fold2: 2019~2023H1 "
+    "-> 2023H2"
+)
+
+summary.append(
+    "Fold3: 2019~2023H2 "
+    "-> 2024H1"
+)
+
+summary.append(
+    "Fold4: 2019~2024H1 "
+    "-> 2024H2"
+)
+
+summary.append(
+    "Fold5: 2019~2024H2 "
+    "-> 2025H1"
+)
 
 summary.append("")
 
-
-# ------------------------------------------------------------
-# Label
-# ------------------------------------------------------------
-
 summary.append(
-    "[예측 대상]"
+    "[COVID 비교]"
 )
 
-
 summary.append(
-    f"매출위기 노출 이후 "
-    f"{TARGET_HORIZON} 이내 "
-    f"폐업 여부"
+    "포함: 전체 학습기간 사용"
 )
 
+summary.append(
+    f"제외: "
+    f"{COVID_START.date()} ~ "
+    f"{COVID_END.date()} 제거"
+)
 
 summary.append("")
 
-
-# ------------------------------------------------------------
-# Class distribution
-# ------------------------------------------------------------
+summary.append(
+    "[최종 선택]"
+)
 
 summary.append(
-    "[데이터 구성]"
+    f"COVID: {BEST_COVID}"
 )
-
 
 summary.append(
-
-    f"생존: "
-    f"{target_counts.get(0, 0):,}개"
-
+    f"Model: {BEST_MODEL}"
 )
-
 
 summary.append(
-
-    f"폐업: "
-    f"{target_counts.get(1, 0):,}개"
-
+    f"Imbalance: "
+    f"{BEST_IMBALANCE}"
 )
-
-
-closure_rate = (
-
-    target_counts.get(
-        1,
-        0
-    )
-
-    / target_counts.sum()
-
-    * 100
-
-)
-
 
 summary.append(
-
-    f"폐업 비율: "
-    f"{closure_rate:.2f}%"
-
+    f"평균 PR-AUC: "
+    f"{best_row['Mean_PR_AUC']:.4f}"
 )
 
+summary.append(
+    f"평균 ROC-AUC: "
+    f"{best_row['Mean_ROC_AUC']:.4f}"
+)
+
+summary.append(
+    f"평균 폐업 Precision: "
+    f"{best_row['Mean_Precision_Closure']:.4f}"
+)
+
+summary.append(
+    f"평균 폐업 Recall: "
+    f"{best_row['Mean_Recall_Closure']:.4f}"
+)
+
+summary.append(
+    f"평균 폐업 F1: "
+    f"{best_row['Mean_F1_Closure']:.4f}"
+)
+
+summary.append(
+    f"평균 Balanced Accuracy: "
+    f"{best_row['Mean_Balanced_Accuracy']:.4f}"
+)
 
 summary.append("")
 
-
-# ------------------------------------------------------------
-# Model
-# ------------------------------------------------------------
-
 summary.append(
-    "[PR-AUC 기준 상위 모델]"
+    "[최종 모델]"
 )
 
-
 summary.append(
-
-    f"모델: "
-    f"{best_model_name}"
-
+    "학습: 2019-01-01 ~ "
+    "2025-06-30"
 )
 
-
 summary.append(
-
-    f"불균형 처리: "
-    f"{best_method}"
-
+    "예측: 2025-07-01 ~ "
+    "2025-12-31"
 )
 
-
-summary.append("")
-
-
-# ------------------------------------------------------------
-# Metrics
-# ------------------------------------------------------------
-
 summary.append(
-    "[모델 성능]"
+    f"최종 학습 N: "
+    f"{len(final_train_df):,}"
 )
 
-
 summary.append(
-
-    f"PR-AUC: "
-    f"{best_row['PR_AUC']:.3f}"
-
+    f"2025H2 예측 N: "
+    f"{len(final_predict_df):,}"
 )
 
-
-summary.append(
-
-    f"ROC-AUC: "
-    f"{best_row['ROC_AUC']:.3f}"
-
-)
-
-
-summary.append(
-
-    f"폐업 Recall: "
-    f"{best_row['Recall_Closure']:.3f}"
-
-)
-
-
-summary.append(
-
-    f"폐업 Precision: "
-    f"{best_row['Precision_Closure']:.3f}"
-
-)
-
-
-summary.append(
-
-    f"폐업 F1: "
-    f"{best_row['F1_Closure']:.3f}"
-
-)
-
-
-summary.append(
-
-    f"Balanced Accuracy: "
-    f"{best_row['Balanced_Accuracy']:.3f}"
-
-)
-
-
-# ------------------------------------------------------------
-# SHAP
-# ------------------------------------------------------------
-
-if (
-    SHAP_SUCCESS
-    and
-    shap_importance
-    is not None
-):
-
-    summary.append("")
-
-    summary.append(
-        "[폐업 예측 주요 변수]"
-    )
-
-
-    for index, row in (
-
-        shap_importance
-        .head(10)
-        .iterrows()
-
-    ):
-
-        summary.append(
-
-            f"{index + 1}. "
-            f"{row['변수']}"
-
-        )
-
-
-# ============================================================
-# 38. Summary 저장
-# ============================================================
 
 summary_text = (
     "\n".join(
@@ -2710,31 +3245,24 @@ summary_text = (
 )
 
 
-SUMMARY_PATH = (
-
-    OUTPUT_DIR
-    / "summary.txt"
-
-)
-
-
 with open(
 
-    SUMMARY_PATH,
+    OUTPUT_DIR
+    / "summary.txt",
 
     "w",
 
     encoding="utf-8",
 
-) as file:
+) as f:
 
-    file.write(
+    f.write(
         summary_text
     )
 
 
 # ============================================================
-# 39. 최종 출력
+# 41. 최종 출력
 # ============================================================
 
 print("\n")
@@ -2742,515 +3270,59 @@ print(summary_text)
 
 
 print("\n")
-print("=" * 70)
+print("=" * 80)
 
 print(
-    "모델링 완료"
+    "모든 작업 완료"
 )
 
-print("=" * 70)
+print("=" * 80)
 
+
+print(
+    "\n[저장 파일]"
+)
+
+print(
+    "1. metrics/"
+    "expanding_window_fold_results.csv"
+)
+
+print(
+    "2. metrics/"
+    "expanding_window_mean_results.csv"
+)
+
+print(
+    "3. metrics/"
+    "fold_pr_auc_table.csv"
+)
+
+print(
+    "4. metrics/"
+    "covid_performance_comparison.csv"
+)
+
+print(
+    "5. predictions/"
+    "2025H2_closure_predictions.csv"
+)
+
+print(
+    "6. importance/"
+    "final_model_feature_importance.csv"
+)
+
+print(
+    "7. shap/"
+    "final_model_shap_importance.csv"
+)
+
+print(
+    "8. summary.txt"
+)
 
 print(
     f"\n결과 폴더:\n"
     f"{OUTPUT_DIR.resolve()}"
-)
-
-
-print(
-    "\n주요 결과:"
-)
-
-
-print(
-    "1. metrics/model_comparison.csv"
-)
-
-
-print(
-    "2. figures/*.png"
-)
-
-
-print(
-    "3. importance/*.csv"
-)
-
-
-print(
-    "4. importance/*.png"
-)
-
-
-print(
-    "5. shap/best_model_shap_summary.png"
-)
-
-
-print(
-    "6. shap/best_model_shap_importance.csv"
-)
-
-
-print(
-    "7. summary.txt"
-)
-
-# ============================================================
-# Markdown 결과 보고서 생성
-# ============================================================
-
-REPORT_PATH = OUTPUT_DIR / "model_report.md"
-
-
-def make_markdown_table(df):
-    """
-    pandas DataFrame을 Markdown Table로 변환
-    tabulate 설치 없이 동작
-    """
-
-    df = df.copy()
-
-    header = "| " + " | ".join(df.columns.astype(str)) + " |"
-    separator = "| " + " | ".join(["---"] * len(df.columns)) + " |"
-
-    rows = []
-
-    for _, row in df.iterrows():
-
-        values = []
-
-        for value in row:
-
-            if isinstance(value, float):
-                values.append(f"{value:.4f}")
-            else:
-                values.append(str(value))
-
-        rows.append(
-            "| " + " | ".join(values) + " |"
-        )
-
-    return "\n".join(
-        [header, separator] + rows
-    )
-
-
-# ============================================================
-# 1. 성능 결과 정리
-# ============================================================
-
-performance_table = results_df[
-    [
-        "Model",
-        "Imbalance",
-        "PR_AUC",
-        "ROC_AUC",
-        "Precision_Closure",
-        "Recall_Closure",
-        "F1_Closure",
-        "Balanced_Accuracy",
-    ]
-].copy()
-
-
-performance_table.columns = [
-    "모델",
-    "불균형 처리",
-    "PR-AUC",
-    "ROC-AUC",
-    "폐업 Precision",
-    "폐업 Recall",
-    "폐업 F1",
-    "Balanced Accuracy",
-]
-
-
-# ============================================================
-# 2. Feature Importance
-# ============================================================
-
-if hasattr(best_model, "feature_importances_"):
-
-    feature_importance_report = pd.DataFrame(
-        {
-            "변수": feature_names,
-            "Feature Importance":
-                best_model.feature_importances_,
-        }
-    )
-
-    feature_importance_report = (
-        feature_importance_report
-        .sort_values(
-            "Feature Importance",
-            ascending=False
-        )
-        .head(20)
-        .reset_index(drop=True)
-    )
-
-    feature_importance_report.insert(
-        0,
-        "순위",
-        range(
-            1,
-            len(feature_importance_report) + 1
-        )
-    )
-
-else:
-
-    feature_importance_report = None
-
-
-# ============================================================
-# 3. SHAP Importance
-# ============================================================
-
-if SHAP_SUCCESS and shap_importance is not None:
-
-    shap_report = (
-        shap_importance
-        .head(20)
-        .copy()
-        .reset_index(drop=True)
-    )
-
-    shap_report.insert(
-        0,
-        "순위",
-        range(
-            1,
-            len(shap_report) + 1
-        )
-    )
-
-else:
-
-    shap_report = None
-
-
-# ============================================================
-# 4. 데이터 기본 정보
-# ============================================================
-
-survival_count = int(
-    target_counts.get(0, 0)
-)
-
-closure_count = int(
-    target_counts.get(1, 0)
-)
-
-total_count = (
-    survival_count
-    + closure_count
-)
-
-survival_rate = (
-    survival_count
-    / total_count
-    * 100
-)
-
-closure_rate = (
-    closure_count
-    / total_count
-    * 100
-)
-
-
-data_summary = pd.DataFrame(
-    {
-        "구분": [
-            "전체",
-            "생존",
-            "폐업",
-        ],
-
-        "사업체 수": [
-            total_count,
-            survival_count,
-            closure_count,
-        ],
-
-        "비율": [
-            "100%",
-            f"{survival_rate:.2f}%",
-            f"{closure_rate:.2f}%",
-        ],
-    }
-)
-
-
-# ============================================================
-# 5. Markdown 작성
-# ============================================================
-
-report = []
-
-
-report.append(
-    f"# {TARGET_HORIZON} 사업체 폐업 예측 모델 결과"
-)
-
-report.append("")
-
-
-# ------------------------------------------------------------
-# 데이터
-# ------------------------------------------------------------
-
-report.append(
-    "## 1. 데이터"
-)
-
-report.append("")
-
-report.append(
-    make_markdown_table(
-        data_summary
-    )
-)
-
-report.append("")
-
-report.append(
-    f"- 예측 대상: 위기 노출 이후 "
-    f"**{TARGET_HORIZON} 이내 폐업 여부**"
-)
-
-report.append(
-    "- 모델링 기준: **폐업 = 1 / 생존 = 0**"
-)
-
-report.append("")
-
-
-# ------------------------------------------------------------
-# 성능
-# ------------------------------------------------------------
-
-report.append(
-    "## 2. 모델 성능"
-)
-
-report.append("")
-
-report.append(
-    make_markdown_table(
-        performance_table
-    )
-)
-
-report.append("")
-
-
-# ------------------------------------------------------------
-# 상위 모델
-# ------------------------------------------------------------
-
-report.append(
-    "### PR-AUC 기준 상위 실험"
-)
-
-report.append("")
-
-
-best_summary = pd.DataFrame(
-    {
-        "항목": [
-            "모델",
-            "불균형 처리",
-            "PR-AUC",
-            "ROC-AUC",
-            "폐업 Precision",
-            "폐업 Recall",
-            "폐업 F1",
-        ],
-
-        "결과": [
-            best_model_name,
-            best_method,
-            f"{best_row['PR_AUC']:.4f}",
-            f"{best_row['ROC_AUC']:.4f}",
-            f"{best_row['Precision_Closure']:.4f}",
-            f"{best_row['Recall_Closure']:.4f}",
-            f"{best_row['F1_Closure']:.4f}",
-        ],
-    }
-)
-
-
-report.append(
-    make_markdown_table(
-        best_summary
-    )
-)
-
-report.append("")
-
-
-# ------------------------------------------------------------
-# Feature Importance
-# ------------------------------------------------------------
-
-report.append(
-    "## 3. Feature Importance"
-)
-
-report.append("")
-
-report.append(
-    f"**{best_model_name} + "
-    f"{best_method}** 모델 기준입니다."
-)
-
-report.append("")
-
-
-if feature_importance_report is not None:
-
-    report.append(
-        make_markdown_table(
-            feature_importance_report
-        )
-    )
-
-else:
-
-    report.append(
-        "Feature Importance를 "
-        "계산할 수 없습니다."
-    )
-
-
-report.append("")
-
-
-# ------------------------------------------------------------
-# SHAP
-# ------------------------------------------------------------
-
-report.append(
-    "## 4. SHAP"
-)
-
-report.append("")
-
-report.append(
-    "평균 절대 SHAP 값이 클수록 "
-    "모델 예측에 미치는 영향이 큰 변수입니다."
-)
-
-report.append("")
-
-
-if shap_report is not None:
-
-    report.append(
-        make_markdown_table(
-            shap_report
-        )
-    )
-
-else:
-
-    report.append(
-        "SHAP 결과를 생성하지 못했습니다."
-    )
-
-
-report.append("")
-
-
-# ------------------------------------------------------------
-# 그래프
-# ------------------------------------------------------------
-
-report.append(
-    "### SHAP 그래프"
-)
-
-report.append("")
-
-report.append(
-    "![SHAP Summary]"
-    "(shap/best_model_shap_summary.png)"
-)
-
-report.append("")
-
-report.append(
-    "![SHAP Importance]"
-    "(shap/best_model_shap_bar.png)"
-)
-
-report.append("")
-
-
-# ------------------------------------------------------------
-# 간단한 지표 설명
-# ------------------------------------------------------------
-
-report.append(
-    "## 5. 지표 해석"
-)
-
-report.append("")
-
-
-metric_description = pd.DataFrame(
-    {
-        "지표": [
-            "PR-AUC",
-            "ROC-AUC",
-            "폐업 Precision",
-            "폐업 Recall",
-            "폐업 F1",
-            "Feature Importance",
-            "SHAP",
-        ],
-
-        "의미": [
-            "불균형 데이터에서 폐업 사업자를 얼마나 잘 구분하는지 평가",
-            "생존과 폐업을 전반적으로 얼마나 잘 구분하는지 평가",
-            "폐업이라고 예측한 사업자 중 실제 폐업한 비율",
-            "실제 폐업 사업자 중 모델이 찾아낸 비율",
-            "폐업 Precision과 Recall의 균형",
-            "모델이 예측할 때 많이 활용한 변수",
-            "각 변수가 개별 예측에 얼마나 영향을 미쳤는지 설명",
-        ],
-    }
-)
-
-
-report.append(
-    make_markdown_table(
-        metric_description
-    )
-)
-
-
-# ============================================================
-# 6. 저장
-# ============================================================
-
-REPORT_PATH.write_text(
-    "\n".join(report),
-    encoding="utf-8",
-)
-
-
-print("\n" + "=" * 70)
-
-print(
-    "Markdown 보고서 생성 완료"
-)
-
-print("=" * 70)
-
-print(
-    REPORT_PATH.resolve()
 )

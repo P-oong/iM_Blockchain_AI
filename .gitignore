@@ -4,7 +4,8 @@ data/processed/labeling/*.csv
 data/*.csv
 results
 src/models/result.py
-
+*.xlsx
+*.csv
 *.pyc
 __pycache__/
 
