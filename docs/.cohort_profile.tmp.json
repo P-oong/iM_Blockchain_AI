@@ -1,0 +1,499 @@
+{
+  "rows": 77736,
+  "columns": 49,
+  "sha256": "54e8d64af9b6ab61b00d381a45324f09a71158e923f9862aea970ee8b2476baf",
+  "column_stats": [
+    {
+      "name": "관리번호",
+      "unique": 77736,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": null,
+      "max": null,
+      "fractional_values": 0
+    },
+    {
+      "name": "구",
+      "unique": 9,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": "군위군",
+      "max": "중구",
+      "fractional_values": 0
+    },
+    {
+      "name": "읍면동",
+      "unique": 150,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": "가창면",
+      "max": "효목2동",
+      "fractional_values": 0
+    },
+    {
+      "name": "업종",
+      "unique": 12,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": "동물_동물미용업",
+      "max": "식품_휴게음식점",
+      "fractional_values": 0
+    },
+    {
+      "name": "기준분기",
+      "unique": 40,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": "2016Q1",
+      "max": "2025Q4",
+      "fractional_values": 0
+    },
+    {
+      "name": "t0",
+      "unique": 40,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": "2016-03-31",
+      "max": "2025-12-31",
+      "fractional_values": 0
+    },
+    {
+      "name": "업력_일수",
+      "unique": 10824,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": 0.0,
+      "max": 22317.0,
+      "fractional_values": 0
+    },
+    {
+      "name": "매출액",
+      "unique": 2923,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": 49628507.0,
+      "max": 1171833778.0,
+      "fractional_values": 0
+    },
+    {
+      "name": "이용건수",
+      "unique": 2694,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": 1599.0,
+      "max": 73460.0,
+      "fractional_values": 0
+    },
+    {
+      "name": "sales_yoy",
+      "unique": 2923,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": -0.5869229759635894,
+      "max": -0.20012162199371608,
+      "fractional_values": 77736
+    },
+    {
+      "name": "peer_yoy",
+      "unique": 444,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": -0.14167253365578525,
+      "max": 0.15891535774309773,
+      "fractional_values": 77736
+    },
+    {
+      "name": "peer_gap",
+      "unique": 2923,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": -0.6112750351085734,
+      "max": -0.10018570417135364,
+      "fractional_values": 77736
+    },
+    {
+      "name": "crisis_flag",
+      "unique": 1,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": 1.0,
+      "max": 1.0,
+      "fractional_values": 0
+    },
+    {
+      "name": "episode_start",
+      "unique": 1,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": 1.0,
+      "max": 1.0,
+      "fractional_values": 0
+    },
+    {
+      "name": "행정동코드",
+      "unique": 150,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": "2711051700",
+      "max": "2772037000",
+      "fractional_values": 0
+    },
+    {
+      "name": "업력_연수",
+      "unique": 10824,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": 0.0,
+      "max": 61.100616016427104,
+      "fractional_values": 77642
+    },
+    {
+      "name": "업력_개월수",
+      "unique": 10824,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": 0.0,
+      "max": 733.2073921971253,
+      "fractional_values": 77524
+    },
+    {
+      "name": "최근1년_신규여부",
+      "unique": 2,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": 0.0,
+      "max": 1.0,
+      "fractional_values": 0
+    },
+    {
+      "name": "최근3년_신규여부",
+      "unique": 2,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": 0.0,
+      "max": 1.0,
+      "fractional_values": 0
+    },
+    {
+      "name": "quarter_of_year",
+      "unique": 4,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": 1.0,
+      "max": 4.0,
+      "fractional_values": 0
+    },
+    {
+      "name": "구_전체사업장수_lag1q",
+      "unique": 337,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": 590.0,
+      "max": 12790.0,
+      "fractional_values": 0
+    },
+    {
+      "name": "구_동일업종수_lag1q",
+      "unique": 958,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": 0.0,
+      "max": 6428.0,
+      "fractional_values": 0
+    },
+    {
+      "name": "동_전체사업장수_lag1q",
+      "unique": 788,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": 21.0,
+      "max": 1527.0,
+      "fractional_values": 0
+    },
+    {
+      "name": "동_동일업종수_lag1q",
+      "unique": 296,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": 0.0,
+      "max": 803.0,
+      "fractional_values": 0
+    },
+    {
+      "name": "구_동일업종비율_lag1q",
+      "unique": 1925,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": 0.0,
+      "max": 0.6181318681318682,
+      "fractional_values": 77729
+    },
+    {
+      "name": "동_동일업종비율_lag1q",
+      "unique": 2473,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": 0.0,
+      "max": 0.8230088495575221,
+      "fractional_values": 77709
+    },
+    {
+      "name": "동_동일업종_신규수_4q_lag1q",
+      "unique": 85,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": 0.0,
+      "max": 160.0,
+      "fractional_values": 0
+    },
+    {
+      "name": "동_동일업종_폐업수_4q_lag1q",
+      "unique": 77,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": 0.0,
+      "max": 179.0,
+      "fractional_values": 0
+    },
+    {
+      "name": "동_동일업종_신규진입률_4q_lag1q",
+      "unique": 749,
+      "missing": 167,
+      "missing_pct": 0.21482967994236904,
+      "min": 0.0,
+      "max": 7.066666666666666,
+      "fractional_values": 74115
+    },
+    {
+      "name": "동_동일업종_폐업률_4q_lag1q",
+      "unique": 672,
+      "missing": 26,
+      "missing_pct": 0.03344653699701554,
+      "min": 0.0,
+      "max": 1.0,
+      "fractional_values": 72974
+    },
+    {
+      "name": "동_동일업종_순증감률_4q_lag1q",
+      "unique": 733,
+      "missing": 167,
+      "missing_pct": 0.21482967994236904,
+      "min": -1.0,
+      "max": 4.0,
+      "fractional_values": 70351
+    },
+    {
+      "name": "동_동일업종_평균업력_lag1q",
+      "unique": 2873,
+      "missing": 27,
+      "missing_pct": 0.03473294226613152,
+      "min": 0.0027378507871321013,
+      "max": 60.84873374401095,
+      "fractional_values": 77709
+    },
+    {
+      "name": "지역대비_업력비율_lag1q",
+      "unique": 70088,
+      "missing": 3802,
+      "missing_pct": 4.890912833178965,
+      "min": 0.0,
+      "max": 14.2018950481306,
+      "fractional_values": 73651
+    },
+    {
+      "name": "sales_qoq",
+      "unique": 2923,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": -0.6174253463813169,
+      "max": 0.31111168812107715,
+      "fractional_values": 77736
+    },
+    {
+      "name": "sales_trend_4q",
+      "unique": 2923,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": -0.2768393098225104,
+      "max": 0.1814060253336632,
+      "fractional_values": 77736
+    },
+    {
+      "name": "sales_vol_4q",
+      "unique": 2923,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": 0.0368267079054448,
+      "max": 0.5268482771217081,
+      "fractional_values": 77736
+    },
+    {
+      "name": "sales_drawdown_4q",
+      "unique": 2903,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": -0.637992812898832,
+      "max": 0.0,
+      "fractional_values": 77412
+    },
+    {
+      "name": "sales_decline_duration",
+      "unique": 16,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": 1.0,
+      "max": 16.0,
+      "fractional_values": 0
+    },
+    {
+      "name": "sales_rank_pct",
+      "unique": 291,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": 0.006666666666666667,
+      "max": 0.31333333333333335,
+      "fractional_values": 77736
+    },
+    {
+      "name": "average_ticket",
+      "unique": 2923,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": 7633.761902732193,
+      "max": 58255.71353846154,
+      "fractional_values": 77735
+    },
+    {
+      "name": "horizon_end_12M",
+      "unique": 40,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": "2017-03-31",
+      "max": "2026-12-31",
+      "fractional_values": 0
+    },
+    {
+      "name": "Y_12M",
+      "unique": 2,
+      "missing": 4901,
+      "missing_pct": 6.3046722239374295,
+      "min": 0.0,
+      "max": 1.0,
+      "fractional_values": 0
+    },
+    {
+      "name": "label_status_12M",
+      "unique": 2,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": "insufficient_followup",
+      "max": "observed",
+      "fractional_values": 0
+    },
+    {
+      "name": "horizon_end_18M",
+      "unique": 40,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": "2017-09-30",
+      "max": "2027-06-30",
+      "fractional_values": 0
+    },
+    {
+      "name": "Y_18M",
+      "unique": 2,
+      "missing": 7516,
+      "missing_pct": 9.668622002675724,
+      "min": 0.0,
+      "max": 1.0,
+      "fractional_values": 0
+    },
+    {
+      "name": "label_status_18M",
+      "unique": 2,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": "insufficient_followup",
+      "max": "observed",
+      "fractional_values": 0
+    },
+    {
+      "name": "horizon_end_24M",
+      "unique": 40,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": "2018-03-31",
+      "max": "2027-12-31",
+      "fractional_values": 0
+    },
+    {
+      "name": "Y_24M",
+      "unique": 2,
+      "missing": 10463,
+      "missing_pct": 13.459658330760522,
+      "min": 0.0,
+      "max": 1.0,
+      "fractional_values": 0
+    },
+    {
+      "name": "label_status_24M",
+      "unique": 2,
+      "missing": 0,
+      "missing_pct": 0.0,
+      "min": "insufficient_followup",
+      "max": "observed",
+      "fractional_values": 0
+    }
+  ],
+  "categories": {
+    "구": {
+      "중구": 7250,
+      "서구": 5915,
+      "동구": 11285,
+      "달서구": 15023,
+      "남구": 5628,
+      "북구": 12684,
+      "수성구": 12172,
+      "달성군": 7047,
+      "군위군": 732
+    },
+    "업종": {
+      "식품_일반음식점": 39397,
+      "식품_휴게음식점": 12243,
+      "식품_즉석판매제조가공업": 6263,
+      "식품_제과점영업": 1345,
+      "생활_목욕장업": 336,
+      "생활_이용업": 1226,
+      "생활_미용업": 11540,
+      "식품_축산판매업": 4158,
+      "동물_동물위탁관리업": 236,
+      "동물_동물미용업": 474,
+      "생활_골프연습장업": 218,
+      "생활_당구장업": 300
+    },
+    "crisis_flag": {
+      "1": 77736
+    },
+    "episode_start": {
+      "1": 77736
+    },
+    "quarter_of_year": {
+      "2": 21584,
+      "3": 18897,
+      "1": 20372,
+      "4": 16883
+    },
+    "label_status_12M": {
+      "observed": 72835,
+      "insufficient_followup": 4901
+    },
+    "label_status_18M": {
+      "observed": 70220,
+      "insufficient_followup": 7516
+    },
+    "label_status_24M": {
+      "observed": 67273,
+      "insufficient_followup": 10463
+    }
+  }
+}

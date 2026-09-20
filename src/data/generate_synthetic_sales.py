@@ -14,13 +14,17 @@ import math
 import random
 import re
 from collections import Counter, defaultdict
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 if __package__:
-    from .market_keys import AREA_PATTERN, BUILDING_PATTERN, normalize_text
+    from .market_keys import (AREA_PATTERN, BUILDING_PATTERN, normalize_text, geography_columns,
+                             normalize_area_code, canonical_geography, market_key)
+    from .provenance import fingerprint, find_input_csv
 else:
-    from market_keys import AREA_PATTERN, BUILDING_PATTERN, normalize_text
+    from market_keys import (AREA_PATTERN, BUILDING_PATTERN, normalize_text, geography_columns,
+                            normalize_area_code, canonical_geography, market_key)
+    from provenance import fingerprint, find_input_csv
 
 
 KEY_COLUMNS = ("구", "읍면동", "업종")
@@ -60,6 +64,7 @@ class SourceData:
     groups: list[Group]
     competition: dict[tuple[Group, int], tuple[float, float]]
     audit: dict
+    area_codes: dict = field(default_factory=dict)
 
 
 def _clean(value: str | None) -> str:
@@ -68,13 +73,20 @@ def _clean(value: str | None) -> str:
 
 def load_source(
     path: Path, encoding: str = "utf-8-sig", use_competition: bool = False,
-    through_year: int = 2025,
+    through_year: int = 2025, area_column: str = "auto",
 ) -> SourceData:
     """Stream the annual file, retaining only an explicit input allowlist.
 
     No business IDs, opening/closure dates, survival flags or labels are used.
     Repeated business-year rows contribute only one market key / annual metric.
     """
+    with Path(path).open(encoding=encoding, newline="") as stream:
+        header = [normalize_text(value) for value in next(csv.reader(stream), [])]
+    chosen_area, code_column = geography_columns(header, area_column)
+    if chosen_area != "읍면동" or code_column:
+        if use_competition:
+            raise ValueError("수정 원본의 연간 경쟁지표는 재사용하지 않습니다. 라벨링 단계에서 과거 날짜로 재산출하세요.")
+        return _load_coded_catalog(path, encoding, through_year, chosen_area, code_column)
     groups: set[Group] = set()
     competition: dict[tuple[Group, int], tuple[float, float]] = {}
     reasons: Counter = Counter()
@@ -146,6 +158,60 @@ def load_source(
         "market_groups": len(groups),
         "annual_competition_snapshots": len(competition),
     })
+
+
+def _load_coded_catalog(path, encoding, through_year, area_column, code_column):
+    groups = set()
+    counts = defaultdict(Counter)
+    excluded = Counter()
+    total = 0
+    used = ["구", area_column, "업종"] + ([code_column] if code_column else [])
+    with Path(path).open(encoding=encoding, newline="") as stream:
+        reader = csv.reader(stream)
+        header = [normalize_text(value) for value in next(reader, [])]
+        if len(header) != len(set(header)) or set(used) - set(header):
+            raise ValueError("지역·업종 입력 열이 누락되거나 중복되었습니다.")
+        indices = [header.index(name) for name in used]
+        year_index = header.index("기준연도") if "기준연도" in header else None
+        for row in reader:
+            total += 1
+            if len(row) != len(header):
+                raise ValueError("원본 CSV 열 개수가 일치하지 않습니다.")
+            if year_index is not None and int(row[year_index]) > through_year:
+                excluded["after_source_cutoff_year"] += 1
+                continue
+            values = [normalize_text(row[index]) for index in indices]
+            group = market_key(*values[:3])
+            if group is None:
+                excluded["invalid_market_key"] += 1
+                continue
+            try:
+                code = normalize_area_code(values[3]) if code_column else None
+            except ValueError:
+                excluded["invalid_area_code"] += 1
+                continue
+            groups.add((group, code))
+            if code:
+                counts[code][group[:2]] += 1
+    mapping, corrections = canonical_geography(counts)
+    normalized, codes = set(), {}
+    for group, code in groups:
+        if code and code not in mapping:
+            continue
+        canonical = (*mapping[code], group[2]) if code else group
+        normalized.add(canonical)
+        if code:
+            codes[canonical] = code
+    if not normalized:
+        raise ValueError("사용할 수 있는 지역·업종 조합이 없습니다.")
+    return SourceData(sorted(normalized), {}, {
+        "source_file": Path(path).name, "source_rows": total,
+        "used_columns": used + (["기준연도"] if year_index is not None else []),
+        "source_cutoff_year": through_year, "excluded_rows": sum(excluded.values()),
+        "excluded_rows_by_reason": dict(excluded), "market_groups": len(normalized),
+        "geography": {"area_column": area_column, "code_column": code_column,
+                      "codes": len(mapping), "corrections": corrections},
+    }, codes)
 
 
 def _rng(seed: int, *parts: object) -> random.Random:
@@ -233,6 +299,8 @@ def generate_sales(source: SourceData, config: Config) -> list[dict]:
                 quarter_label(quarter), district, area, industry, sales,
                 max(1, round(sales / average_ticket)),
             ))))
+            if source.area_codes:
+                rows[-1]["지역코드"] = source.area_codes[group]
     return sorted(rows, key=lambda row: tuple(row[column] for column in SALES_COLUMNS[:4]))
 
 
@@ -277,6 +345,38 @@ def summarize(rows: list[dict]) -> dict:
     }
 
 
+def save_generation(source: SourceData, config: Config, output: Path, input_path: Path) -> dict:
+    output = Path(output).resolve()
+    if output == Path(input_path).resolve() or output.is_relative_to((REPO_ROOT / "data/raw").resolve()):
+        raise ValueError("입력 파일 또는 data/raw에 출력할 수 없습니다.")
+    source_fingerprint = fingerprint(input_path)
+    rows = generate_sales(source, config)
+    diagnostics = summarize(rows)
+    metadata = {
+        "is_synthetic": True, "generator_version": 2, "config": asdict(config),
+        "source_fingerprint": source_fingerprint,
+        "schema": {"key": list(SALES_COLUMNS[:4]), "sales_unit": "KRW", "transactions_unit": "count"},
+        "source": source.audit, "validation": diagnostics,
+        "assumptions": [
+            "읍면동 출력 열은 입력에서 선택한 지역 열의 호환 별칭입니다. geography.area_column에서 실제 기준을 확인하세요.",
+            "새 원본에서는 행정동을 우선하며 지역코드는 문자열로 보존합니다. 구명은 동일 코드의 원본 내 95% 이상 일치 매핑으로 정규화합니다.",
+            "전체 기간에 고정된 지역 목록을 쓰며 역사적 행정구역 변경을 복원하지 않습니다.",
+            "매출 규모·계절성·추세·충격은 PoC 가정이며 실제 DIP 명세·매출의 검증된 복제가 아닙니다.",
+            "폐업일·폐업라벨은 생성에 사용하지 않습니다. 경쟁효과는 기본적으로 중립입니다.",
+            "업종 비교치는 입력 시장들의 합계이며 공식 대구 전체 통계가 아닙니다.",
+        ],
+    }
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temp = output.with_suffix(".csv.tmp")
+    with temp.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(SALES_COLUMNS) + (["지역코드"] if source.area_codes else []))
+        writer.writeheader()
+        writer.writerows(rows)
+    temp.replace(output)
+    output.with_suffix(".metadata.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return metadata
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, help="원본 사업체 CSV. 생략 시 data/raw의 유일한 CSV")
@@ -286,49 +386,23 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--shock-probability", type=float, default=0.08)
     parser.add_argument("--use-competition", action="store_true", help="산출 기준을 확인한 경쟁지표를 전년도부터 사용")
+    parser.add_argument("--area-column", default="auto", help="auto는 행정동을 우선 선택")
     parser.add_argument("--encoding", default="utf-8-sig", help="입력 인코딩. 출력은 항상 utf-8-sig")
     args = parser.parse_args()
     try:
         config = Config(args.start_quarter, args.end_quarter, args.seed,
                         args.shock_probability, args.use_competition)
         if args.input is None:
-            candidates = sorted((REPO_ROOT / "data/raw").glob("*.csv"))
-            if len(candidates) != 1:
-                raise ValueError("data/raw의 CSV가 한 개가 아닙니다. --input을 지정하세요.")
-            args.input = candidates[0]
+            args.input = find_input_csv(REPO_ROOT / "data/raw")
         output = args.output.resolve()
         if output.suffix.lower() != ".csv":
             raise ValueError("출력 파일 확장자는 .csv여야 합니다.")
         if output == args.input.resolve() or output.is_relative_to((REPO_ROOT / "data/raw").resolve()):
             raise ValueError("입력 파일 또는 data/raw에 출력할 수 없습니다.")
-        source = load_source(args.input, args.encoding, config.use_competition, int(config.end_quarter[:4]))
-        rows = generate_sales(source, config)
-        diagnostics = summarize(rows)
-        metadata = {
-            "is_synthetic": True,
-            "generator_version": 1,
-            "config": asdict(config),
-            "schema": {"key": list(SALES_COLUMNS[:4]), "sales_unit": "KRW", "transactions_unit": "count"},
-            "source": source.audit,
-            "validation": diagnostics,
-            "assumptions": [
-                "제공된 예시를 따른 잠정 스키마이며 실제 DIP 스키마는 확인 전입니다.",
-                "원본 읍면동 문자열을 보존합니다. 형식 검사만 수행하며 행정동 매핑은 별도 작업입니다.",
-                "종료연도까지의 원본에서 추출한 고정 지역·업종 목록으로 모든 분기를 생성합니다. 과거 경계·존재 여부를 재현하지 않습니다.",
-                "매출 규모·계절성·성장률·충격·객단가는 검증용 가정이며 실제 추정치가 아닙니다.",
-                "폐업일·폐업파생변수·생존라벨·사업자 식별자는 매출 생성에 사용하지 않습니다.",
-                "경쟁효과는 기본적으로 1입니다. 활성화 시 t-1/t-2 연도 지표만 쓰고 결측은 중립 처리합니다.",
-                "대구 업종 비교치는 입력에 포함된 지역들의 매출 합계로 계산하며 공식 대구 전체 통계가 아닙니다.",
-                "Crisis 통계는 파이프라인 점검용이며 사업자 선정·Y 라벨링·학습은 수행하지 않습니다.",
-            ],
-        }
-        output.parent.mkdir(parents=True, exist_ok=True)
-        with output.open("w", encoding="utf-8-sig", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=SALES_COLUMNS)
-            writer.writeheader()
-            writer.writerows(rows)
+        source = load_source(args.input, args.encoding, config.use_competition, int(config.end_quarter[:4]), args.area_column)
+        metadata = save_generation(source, config, output, args.input)
+        diagnostics = metadata["validation"]
         metadata_path = output.with_suffix(".metadata.json")
-        metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     except (ValueError, OSError, UnicodeError) as error:
         parser.error(str(error))
     print(f"Sales CSV: {output}")

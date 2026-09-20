@@ -15,7 +15,7 @@ from .businesses import Business, exclusion_row
 @dataclass(frozen=True)
 class LabelConfig:
     observation_end: date
-    horizons: tuple[int, ...] = (6, 12)
+    horizons: tuple[int, ...] = (12, 18, 24)
     entry_mode: str = "episode-start"
 
     def __post_init__(self) -> None:
@@ -96,6 +96,8 @@ def build_cohort(
             reason = "opened_after_observation_end"
         else:
             for candidate in candidates[business.group]:
+                if business.area_code is not None and candidate.area_code != business.area_code:
+                    raise ValueError("사업자와 매출의 지역코드가 일치하지 않습니다. 같은 원본으로 매출을 다시 생성하세요.")
                 t0 = quarter_end(candidate.quarter)
                 if business.opened <= t0 and (business.closed is None or business.closed > t0):
                     selected = candidate

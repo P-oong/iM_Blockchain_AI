@@ -205,7 +205,16 @@ class SourceBusinessTests(unittest.TestCase):
 
 class CohortTests(unittest.TestCase):
     def setUp(self):
-        self.config = LabelConfig(observation_end=date(2025, 12, 31))
+        self.config = LabelConfig(observation_end=date(2025, 12, 31), horizons=(6, 12))
+
+    def test_defaults_are_12_18_24_with_no_six_month_label(self):
+        config = LabelConfig(observation_end=date(2025, 12, 31))
+        self.assertEqual(config.horizons, (12, 18, 24))
+        rows, _ = build_cohort([business(closed=date(2025, 3, 10))], [market(2024, 2)], config)
+        self.assertNotIn("Y_6M", rows[0])
+        self.assertEqual(rows[0]["Y_12M"], 0)
+        self.assertEqual(rows[0]["Y_18M"], 0)
+        self.assertIsNone(rows[0]["Y_24M"])
 
     def test_first_eligible_episode_only_and_annual_horizons(self):
         markets = [

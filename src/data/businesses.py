@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import csv
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from .market_keys import Group, MISSING_VALUES, market_key, normalize_text
+from .market_keys import (Group, MISSING_VALUES, market_key, normalize_text,
+                          geography_columns, normalize_area_code, canonical_geography)
 
 
 REQUIRED_COLUMNS = ("관리번호", "구", "읍면동", "업종", "인허가일자", "폐업일자")
@@ -21,6 +22,7 @@ class Business:
     group: Group
     opened: date
     closed: date | None
+    area_code: str | None = None
 
 
 @dataclass
@@ -37,6 +39,7 @@ class _Record:
     closed: date | None = None
     closed_flag: bool = False
     errors: set[str] = field(default_factory=set)
+    area_code: str | None = None
 
 
 def parse_date(value: str) -> date | None:
@@ -52,7 +55,7 @@ def exclusion_row(business_id: str, group: Group, reason: str, stage: str) -> di
                     (business_id, *group, stage, reason)))
 
 
-def load_businesses(path: Path, encoding: str = "utf-8-sig") -> BusinessSource:
+def load_businesses(path: Path, encoding: str = "utf-8-sig", area_column: str = "auto") -> BusinessSource:
     """Read only identity, market, permit/closure dates and closure consistency flags.
 
     A historical blank closure may be completed by a later record. Two distinct
@@ -64,10 +67,13 @@ def load_businesses(path: Path, encoding: str = "utf-8-sig") -> BusinessSource:
     with Path(path).open(encoding=encoding, newline="") as stream:
         reader = csv.reader(stream)
         header = [normalize_text(value) for value in next(reader, [])]
-        missing = set(REQUIRED_COLUMNS) - set(header)
+        area_column, code_column = geography_columns(header, area_column)
+        required = tuple(area_column if name == "읍면동" else name for name in REQUIRED_COLUMNS)
+        missing = set(required) - set(header)
         if missing or len(header) != len(set(header)):
             raise ValueError(f"사업자 CSV 필수 열 누락 또는 중복: {sorted(missing)}")
-        positions = [header.index(name) for name in REQUIRED_COLUMNS]
+        positions = [header.index(name) for name in required]
+        code_index = header.index(code_column) if code_column else None
         flags = [header.index(name) for name in CLOSED_FLAGS if name in header]
         for line_number, row in enumerate(reader, start=2):
             row_count += 1
@@ -87,6 +93,14 @@ def load_businesses(path: Path, encoding: str = "utf-8-sig") -> BusinessSource:
                 record.errors.add("conflicting_market_key")
             if market_key(*group) is None:
                 record.errors.add("invalid_or_missing_market_key")
+            if code_index is not None:
+                try:
+                    area_code = normalize_area_code(row[code_index])
+                    if record.area_code is not None and record.area_code != area_code:
+                        record.errors.add("conflicting_area_code")
+                    record.area_code = area_code
+                except ValueError:
+                    record.errors.add("invalid_area_code")
             for attr, raw in (("opened", opened_raw), ("closed", closed_raw)):
                 try:
                     parsed = parse_date(raw)
@@ -100,9 +114,19 @@ def load_businesses(path: Path, encoding: str = "utf-8-sig") -> BusinessSource:
                     else:
                         setattr(record, attr, parsed)
             record.closed_flag |= any(normalize_text(row[index]) in ("1", "1.0", "True", "true", "폐업") for index in flags)
+    code_counts = defaultdict(Counter)
+    for record in records.values():
+        if record.area_code and not record.errors:
+            code_counts[record.area_code][record.group[:2]] += 1
+    mapping, corrections = canonical_geography(code_counts)
     businesses, exclusions = [], []
     reasons: Counter = Counter()
     for business_id, record in sorted(records.items()):
+        if code_column and record.area_code:
+            if record.area_code not in mapping:
+                record.errors.add("ambiguous_geography_code")
+            else:
+                record.group = (*mapping[record.area_code], record.group[2])
         if record.opened is None:
             record.errors.add("missing_opened_date")
         if record.closed is not None and record.opened is not None and record.closed < record.opened:
@@ -113,7 +137,7 @@ def load_businesses(path: Path, encoding: str = "utf-8-sig") -> BusinessSource:
             reasons.update(record.errors)
             exclusions.append(exclusion_row(business_id, record.group, "|".join(sorted(record.errors)), "source"))
         else:
-            businesses.append(Business(business_id, record.group, record.opened, record.closed))
+            businesses.append(Business(business_id, record.group, record.opened, record.closed, record.area_code))
     if not records:
         raise ValueError("관리번호가 있는 사업자 행이 없습니다.")
     return BusinessSource(businesses, exclusions, {
@@ -126,5 +150,7 @@ def load_businesses(path: Path, encoding: str = "utf-8-sig") -> BusinessSource:
         "exclusion_reasons_nonexclusive": dict(sorted(reasons.items())),
         "businesses_with_closure_date": sum(b.closed is not None for b in businesses),
         "businesses_without_closure_date": sum(b.closed is None for b in businesses),
-        "used_columns": list(REQUIRED_COLUMNS) + [header[index] for index in flags],
+        "used_columns": list(required) + ([code_column] if code_column else []) + [header[index] for index in flags],
+        "geography": {"area_column": area_column, "code_column": code_column,
+                      "codes": len(mapping), "corrections": corrections},
     })

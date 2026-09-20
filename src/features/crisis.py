@@ -21,7 +21,7 @@ from dataclasses import dataclass, replace
 from numbers import Real
 from pathlib import Path
 
-from src.data.market_keys import market_key, normalize_text
+from src.data.market_keys import market_key, normalize_text, normalize_area_code
 
 
 Group = tuple[str, str, str]
@@ -59,6 +59,7 @@ class MarketQuarter:
     peer_gap: float | None = None
     crisis: bool | None = None
     episode_start: bool = False
+    area_code: str | None = None
 
 
 def _quarter_number(value: str) -> int:
@@ -93,6 +94,7 @@ def _read_sales(path: Path, encoding: str) -> dict[tuple[Group, int], MarketQuar
         if missing:
             raise ValueError(f"Sales CSV is missing columns: {', '.join(sorted(missing))}.")
         positions = [header.index(name) for name in SALES_COLUMNS]
+        code_index = header.index("지역코드") if "지역코드" in header else None
         for line, row in enumerate(reader, start=2):
             if len(row) != len(header):
                 raise ValueError(f"Sales CSV row {line}: column count does not match header.")
@@ -111,7 +113,8 @@ def _read_sales(path: Path, encoding: str) -> dict[tuple[Group, int], MarketQuar
             if count is not None and not count.is_integer():
                 raise ValueError(f"Sales CSV row {line}: 이용건수 must be an integer.")
             observations[key] = MarketQuarter(
-                group, quarter, amount, None if count is None else int(count)
+                group, quarter, amount, None if count is None else int(count),
+                area_code=normalize_area_code(row[code_index]) if code_index is not None else None,
             )
     if not observations:
         raise ValueError("Sales CSV contains no observations.")
