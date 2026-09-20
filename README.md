@@ -75,3 +75,5 @@ python -m src.data.build_labeled_dataset --regenerate-sales
 ```
 
 모델은 `src/models/artifacts/`, 통계·사업자별 점수는 `data/processed/scorecard/`의 실행별 폴더에 CSV·JSON으로 저장합니다. 중간 단계 그래프는 해당 결과 폴더의 `figures/`에 저장합니다. [설치·실행·검토 기준](docs/scorecard.md)과 [개발 노트북](notebooks/최종스코어파이개발_현풍최종_end.ipynb)을 참고하세요.
+
+실제 실행의 단계별 개발 근거·변수선정·모형·등급·검증 결과는 [공모전 제출용 개발·검증 결과서](docs/competition_model_development_report.md)에 정리했습니다.
