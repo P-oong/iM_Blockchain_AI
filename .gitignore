@@ -8,5 +8,12 @@ src/models/result.py
 *.csv
 *.pyc
 __pycache__/
-
+data/varialbe
 .env
+one.ipynb
+two.ipynb
+plus.ipynb
+gpt.py
+logistic_model_results
+final_model_results
+tree_model_results
