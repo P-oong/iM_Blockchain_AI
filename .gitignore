@@ -5,3 +5,6 @@ data/**/*.tmp
 
 *.pyc
 __pycache__/
+.venv-model/
+src/models/artifacts/
+data/processed/scorecard/
